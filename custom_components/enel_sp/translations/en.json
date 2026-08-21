@@ -1,0 +1,91 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Enel São Paulo",
+        "description": "Enter the same credentials used at www.enel.com.br",
+        "data": {
+          "username": "Username (email or CPF)",
+          "password": "Password"
+        }
+      },
+      "installation": {
+        "title": "Select the supply point",
+        "data": {
+          "installation": "Supply point"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reauthenticate Enel São Paulo",
+        "description": "Your session expired or the password changed. Enter your credentials again.",
+        "data": {
+          "username": "Username (email or CPF)",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid username or password",
+      "cannot_connect": "Could not connect to the Enel website",
+      "no_installations": "No supply points found for this account"
+    },
+    "abort": {
+      "already_configured": "This supply point is already configured",
+      "reauth_successful": "Re-authenticated successfully"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "valor_proxima_fatura": {
+        "name": "Next bill"
+      },
+      "consumo_periodo_atual": {
+        "name": "Period consumption"
+      },
+      "bandeira_tarifaria": {
+        "name": "Tariff flag"
+      },
+      "medidor_inteligente": {
+        "name": "Smart meter"
+      },
+      "data_proxima_leitura": {
+        "name": "Next reading date"
+      },
+      "data_leitura_atual": {
+        "name": "Current reading date"
+      },
+      "valor_medidor_anterior": {
+        "name": "Previous meter reading"
+      },
+      "valor_medidor_atual": {
+        "name": "Current meter reading"
+      },
+      "link_fatura_pdf": {
+        "name": "Bill PDF link"
+      },
+      "codigo_pix": {
+        "name": "Pix code"
+      },
+      "status_conta": {
+        "name": "Account status"
+      },
+      "valor_estimado_atual": {
+        "name": "Current estimated amount"
+      },
+      "mensagem_analise_fatura": {
+        "name": "Bill analysis message"
+      },
+      "consumo_medio_diario": {
+        "name": "Daily average consumption"
+      },
+      "gasto_medio_diario": {
+        "name": "Daily average cost"
+      }
+    },
+    "binary_sensor": {
+      "fornecimento_suspenso": {
+        "name": "Supply suspended"
+      }
+    }
+  }
+}

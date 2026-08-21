@@ -1,0 +1,30 @@
+{
+  "missingFields": [],
+  "currentUser": {
+    "E_PARTNER": "0011111111",
+    "E_NOME": "FULANO DE",
+    "E_SOBRENOME": "TAL",
+    "E_EMAIL": "fulano@example.com",
+    "E_BANDEIRA": "AMARELA",
+    "E_CPF": "00000000000",
+    "ET_INST": [
+      {
+        "ANLAGE": "0069999999",
+        "ENDERECO": "R EXEMPLO",
+        "NIVEL_TENSAO": "BT",
+        "APELIDO": "Casa",
+        "VERTRAG": "0003999999",
+        "PARTNER": "0011111111",
+        "VKONT": "100099999999",
+        "SMARTMETER": "X",
+        "SERIE": "AAA0000000000000"
+      }
+    ],
+    "claim": "personalId",
+    "access_token": "ewogICJhbGciOiAiSFMyNTYiLAogICJ0eXAiOiAiSldUIgp9.eyJjcGZfY25waiI6ICJmYWtlIiwgImV4cCI6IDk5OTk5OTk5OTl9.fake-signature",
+    "enel_id": "00000000-0000-0000-0000-000000000000"
+  },
+  "merge": false,
+  "enelIdToken": "00000000-0000-0000-0000-000000000000",
+  "status": "success"
+}

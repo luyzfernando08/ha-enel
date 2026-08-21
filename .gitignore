@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Raw network captures used during reverse-engineering: contain real account
+# data and must never be committed.
+NETWORK.TXT
+response.txt

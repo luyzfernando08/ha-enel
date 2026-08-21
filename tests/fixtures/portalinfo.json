@@ -1,0 +1,32 @@
+{
+  "Header": { "IdPeticion": "00000000-0000-0000-0000-000000000000" },
+  "Body": {
+    "CodigoResultado": "",
+    "DescripcionResultado": "",
+    "E_RESULT": "",
+    "E_MSG": "",
+    "ET_CONTAS": [
+      {
+        "BELNR": "000000000001",
+        "SITUACAO": "Pendente",
+        "VENCIMENTO": "20260909",
+        "ANO_MES_REF": "08/2026",
+        "MONTANTE": 153.44,
+        "O_COD_BARRAS": "00000000000000000000000000000000000000000000000",
+        "COD_BARRAS_NOVO": "00000000000000000000000000000000000000000000",
+        "STATUS": "Pendente"
+      },
+      {
+        "BELNR": "000000000002",
+        "SITUACAO": "Paga",
+        "VENCIMENTO": "20260810",
+        "ANO_MES_REF": "07/2026",
+        "MONTANTE": 163.99,
+        "DT_PAGTO": "20260807",
+        "O_COD_BARRAS": "00000000000000000000000000000000000000000000000",
+        "COD_BARRAS_NOVO": "00000000000000000000000000000000000000000000",
+        "STATUS": "Paga"
+      }
+    ]
+  }
+}

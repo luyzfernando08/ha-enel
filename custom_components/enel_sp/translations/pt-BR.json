@@ -1,0 +1,91 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Enel São Paulo",
+        "description": "Informe as mesmas credenciais usadas em www.enel.com.br",
+        "data": {
+          "username": "Usuário (e-mail ou CPF)",
+          "password": "Senha"
+        }
+      },
+      "installation": {
+        "title": "Selecione a unidade consumidora",
+        "data": {
+          "installation": "Unidade consumidora"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reautenticar Enel São Paulo",
+        "description": "Sua sessão expirou ou a senha mudou. Informe as credenciais novamente.",
+        "data": {
+          "username": "Usuário (e-mail ou CPF)",
+          "password": "Senha"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Usuário ou senha inválidos",
+      "cannot_connect": "Não foi possível conectar ao site da Enel",
+      "no_installations": "Nenhuma unidade consumidora encontrada nessa conta"
+    },
+    "abort": {
+      "already_configured": "Essa unidade consumidora já está configurada",
+      "reauth_successful": "Reautenticado com sucesso"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "valor_proxima_fatura": {
+        "name": "Próxima fatura"
+      },
+      "consumo_periodo_atual": {
+        "name": "Consumo do período"
+      },
+      "bandeira_tarifaria": {
+        "name": "Bandeira tarifária"
+      },
+      "medidor_inteligente": {
+        "name": "Medidor inteligente"
+      },
+      "data_proxima_leitura": {
+        "name": "Data da próxima leitura"
+      },
+      "data_leitura_atual": {
+        "name": "Data da leitura atual"
+      },
+      "valor_medidor_anterior": {
+        "name": "Valor do medidor anterior"
+      },
+      "valor_medidor_atual": {
+        "name": "Valor do medidor atual"
+      },
+      "link_fatura_pdf": {
+        "name": "Link da fatura em PDF"
+      },
+      "codigo_pix": {
+        "name": "Código Pix"
+      },
+      "status_conta": {
+        "name": "Status da conta"
+      },
+      "valor_estimado_atual": {
+        "name": "Valor estimado atual"
+      },
+      "mensagem_analise_fatura": {
+        "name": "Mensagem de análise da fatura"
+      },
+      "consumo_medio_diario": {
+        "name": "Consumo médio diário"
+      },
+      "gasto_medio_diario": {
+        "name": "Gasto médio diário"
+      }
+    },
+    "binary_sensor": {
+      "fornecimento_suspenso": {
+        "name": "Fornecimento suspenso"
+      }
+    }
+  }
+}

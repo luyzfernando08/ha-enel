@@ -1,0 +1,13 @@
+{
+  "Header": { "IdPeticion": "00000000-0000-0000-0000-000000000000" },
+  "Body": {
+    "CodigoResultado": "",
+    "DescripcionResultado": "",
+    "E_RESULT": "",
+    "E_MSG": "",
+    "ET_MEDIA_CONS": [
+      { "MESREF": "07/2026", "CONSUMO": 173, "VALOR": 163.99 },
+      { "MESREF": "08/2026", "CONSUMO": 168, "VALOR": 153.44 }
+    ]
+  }
+}

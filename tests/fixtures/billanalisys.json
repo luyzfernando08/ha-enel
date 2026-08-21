@@ -1,0 +1,34 @@
+{
+  "Header": { "IdPeticion": "00000000-0000-0000-0000-000000000000" },
+  "Body": {
+    "CodigoResultado": "",
+    "DescripcionResultado": "Você gastou R$ 10,55 a menos que o mês anterior e sua média diária desse mês foi de R$ 4,95.",
+    "E_ANT_FIM": "10/07/2026",
+    "E_ANT_INICIO": "11/06/2026",
+    "E_ANT_VALOR": 163.99,
+    "E_ATUAL_FIM": "10/08/2026",
+    "E_ATUAL_INICIO": "11/07/2026",
+    "E_ATUAL_VALOR": 153.44,
+    "E_CONSTANTE": 1,
+    "E_CONS_DIA": 5.42,
+    "E_CONS_TOTAL": 168,
+    "E_DT_LEITURA_ATUAL": "20260810",
+    "E_MSG": "Você gastou R$ 10,55 a menos que o mês anterior e sua média diária desse mês foi de R$ 4,95.",
+    "E_PROX_LEIT": "10 de Setembro",
+    "E_QNT_LEIT": 31,
+    "E_RESULT": "",
+    "E_STATUS": "Pendente",
+    "E_VALOR_DIA": 4.95,
+    "E_VENC": "09/09/2026",
+    "ET_MENU_RAPIDO": [
+      {
+        "ID": "LEITATUAL",
+        "TITULO": "Data e Leitura Atual",
+        "VALOR": "10/08/2026",
+        "VALOR2": "5024",
+        "DESCRICAO": "Texto a ser definido para a Data e Leitura Atual.",
+        "PREFERENCIA": ""
+      }
+    ]
+  }
+}

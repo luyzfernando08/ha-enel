@@ -1,0 +1,21 @@
+{
+  "Header": { "IdPeticion": "00000000-0000-0000-0000-000000000000" },
+  "Body": {
+    "CodigoResultado": "",
+    "DescripcionResultado": "Sucesso no processamento da solicitação",
+    "E_MSG": "Sucesso no processamento da solicitação",
+    "E_RESULT": "",
+    "ET_INSTALACAO": [
+      {
+        "ANLAGE": "0069999999",
+        "PERIODO": "Agosto/2026",
+        "ATUAL_CONSUMO": 168,
+        "ATUAL_VALOR": 153.44,
+        "SUSPENSA": "",
+        "STATUS": "",
+        "MSG_CONSUMO": "",
+        "MSG_SUSPENSAO": ""
+      }
+    ]
+  }
+}
