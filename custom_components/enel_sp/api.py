@@ -87,6 +87,13 @@ _PT_MONTHS = {
 }
 _NEXT_READING_RE = re.compile(r"(\d{1,2})\s+de\s+([A-Za-zçÇ]+)", re.IGNORECASE)
 
+# Abreviação de 3 letras usada em T_GRAPHIC_MONTH (diferente do texto por
+# extenso de E_PROX_LEIT, daí um mapa separado de _PT_MONTHS).
+_PT_MONTH_ABBR = {
+    "JAN": 1, "FEV": 2, "MAR": 3, "ABR": 4, "MAI": 5, "JUN": 6,
+    "JUL": 7, "AGO": 8, "SET": 9, "OUT": 10, "NOV": 11, "DEZ": 12,
+}
+
 
 def _strip_accents(text: str) -> str:
     return (
@@ -162,25 +169,85 @@ def _smart_meter_date_range(now: datetime | None = None) -> tuple[str, str]:
     return _format_sm_date(start), _format_sm_date(end)
 
 
+def smart_meter_month_history(chart_data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Converte ``T_GRAPHIC_MONTH`` (do próprio ``smartmetergetconsumptionchartdata``)
+    para o mesmo formato do ``ET_MEDIA_CONS`` (``portalhistoryinfo``), pra dar
+    pra reaproveitar ``build_consumption_statistics`` sem duplicar o parsing.
+
+    Ao contrário de ``T_GRAPHIC_HOUR``, que só traz os dias dentro do
+    ``StartDate``/``EndDate`` pedido, ``T_GRAPHIC_MONTH`` devolve o histórico
+    mensal inteiro do medidor **independente da janela pedida** — confirmado
+    numa captura real, em que uma janela de 8 dias trouxe 11 meses de
+    histórico junto. Por isso essa é a fonte preferida do histórico mensal
+    (mais completa que o ``portalhistoryinfo``, que costuma trazer bem menos
+    meses).
+    """
+    months: list[dict[str, Any]] = []
+    for item in chart_data.get("T_GRAPHIC_MONTH", []):
+        mes = _PT_MONTH_ABBR.get(str(item.get("Month", "")).upper())
+        ano_raw = item.get("Year")
+        consumo = item.get("ConsumoKW")
+        if mes is None or not ano_raw or consumo is None:
+            continue
+        try:
+            ano = int(ano_raw)
+            ano = 2000 + ano if ano < 100 else ano
+            months.append(
+                {
+                    "MESREF": f"{mes:02d}/{ano}",
+                    "CONSUMO": float(consumo),
+                    # Data real de fechamento do ciclo (YYYYMMDD) — usada por
+                    # build_consumption_statistics pra saber com precisão
+                    # quais meses já fecharam de verdade, em vez de assumir
+                    # que é sempre o último item do array (ver LastReading).
+                    "DATA_FECHAMENTO": str(item.get("Date") or ""),
+                }
+            )
+        except (TypeError, ValueError):
+            continue
+    return months
+
+
 def build_consumption_statistics(
     monthly_history: list[dict[str, Any]],
     hourly_data: list[dict[str, Any]],
+    last_reading: str | None = None,
 ) -> list[dict[str, Any]]:
     """Monta a série de consumo (kWh) usada para alimentar o Painel de Energia.
 
-    Usa os meses já fechados do histórico mensal (``portalhistoryinfo``) como
-    base histórica, descartando de propósito o mais recente — ele cobre o
-    mesmo período que a janela horária do medidor inteligente abaixo, e somar
-    os dois contaria o mesmo consumo duas vezes. Em seguida, continua a soma
+    Usa os meses já fechados do histórico mensal como base histórica,
+    excluindo o(s) que ainda não fecharam de verdade — eles cobrem o mesmo
+    período que os dados horários do medidor inteligente abaixo, e somar os
+    dois contaria o mesmo consumo duas vezes. Em seguida, continua a soma
     cumulativa com os dados horários reais do medidor (``T_GRAPHIC_HOUR``,
     registrador de energia ativa).
+
+    ``monthly_history`` normalmente vem de ``smart_meter_month_history()``
+    (preferencial) ou do ``ET_MEDIA_CONS`` do ``portalhistoryinfo``
+    (fallback) — mesmo formato ``{"MESREF": "MM/AAAA", "CONSUMO": kWh}`` nos
+    dois casos.
+
+    ``last_reading`` é o ``LastReading`` (``YYYYMMDD``) do
+    ``smartmetergetconsumptionchartdata`` — a data em que o ciclo de leitura
+    mais recente fechou de verdade segundo o próprio medidor. Isso importa
+    porque o ciclo de leitura **não é necessariamente alinhado ao mês
+    calendário** (o dia do mês em que fecha varia por conta e pode até mudar
+    ao longo do tempo — não é um valor fixo, por isso sempre lemos
+    ``LastReading`` em vez de assumir um dia): sem ``last_reading``, cai no
+    fallback de assumir que é sempre o último item do array que ainda está
+    em andamento (correto na maioria das vezes, mas impreciso perto da
+    virada do mês quando o ciclo não fecha no dia 1). Com ``last_reading``,
+    mês e hora são filtrados pela mesma fronteira real
+    (``DATA_FECHAMENTO``/``Date`` <= ou > ``last_reading``), o que evita tanto
+    contar consumo em dobro quanto deixar uma lacuna nos dias entre a virada
+    do mês calendário e o fechamento de fato do ciclo.
 
     Sempre recalcula a série inteira a partir do zero: como
     ``async_add_external_statistics`` faz upsert por timestamp, reenviar os
     mesmos pontos em cada atualização é seguro (idempotente) e nunca conta
     consumo duas vezes nem deixa a soma cumulativa diminuir.
     """
-    months: list[tuple[str, datetime, float]] = []
+    months: list[tuple[str, datetime, float, str]] = []
     for item in monthly_history:
         mesref = item.get("MESREF")
         consumo = item.get("CONSUMO")
@@ -194,11 +261,16 @@ def build_consumption_statistics(
             # em horário local, e o HA agrupa "Mês" pelo fuso local — isso
             # jogava o ponto inteiro pro mês errado (o anterior).
             start = datetime(int(yyyy), int(mm), 1, tzinfo=_SAO_PAULO_TZ)
-            months.append((sort_key, start, float(consumo)))
+            fechamento = str(item.get("DATA_FECHAMENTO") or "")
+            months.append((sort_key, start, float(consumo), fechamento))
         except (ValueError, TypeError):
             continue
     months.sort(key=lambda m: m[0])
-    months = months[:-1]
+
+    if last_reading and all(m[3] for m in months):
+        months = [m for m in months if m[3] <= last_reading]
+    else:
+        months = months[:-1]
 
     hours: list[tuple[datetime, float]] = []
     for item in hourly_data:
@@ -208,6 +280,10 @@ def build_consumption_statistics(
             item.get("Date"), item.get("Time"), item.get("ConsumoKW")
         )
         if not date_str or not time_str or consumo_str is None:
+            continue
+        if last_reading and date_str <= last_reading:
+            # Já coberto pelo ciclo fechado correspondente em `months` —
+            # incluir de novo aqui contaria o mesmo consumo duas vezes.
             continue
         try:
             start = datetime.strptime(
@@ -224,7 +300,7 @@ def build_consumption_statistics(
     # "Soma" (o tipo que o Painel de Energia usa) mostram o gráfico vazio.
     running_sum = 0.0
     statistics: list[dict[str, Any]] = []
-    for _, start, consumo in months:
+    for _, start, consumo, _fechamento in months:
         running_sum += consumo
         statistics.append({"start": start, "sum": running_sum, "state": running_sum})
     for start, consumo in hours:

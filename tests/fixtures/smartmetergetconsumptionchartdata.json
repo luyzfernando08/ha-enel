@@ -52,6 +52,7 @@
       }
     ],
     "T_GRAPHIC_MONTH": [
+      { "ConsumoKW": "96", "Date": "20260710", "Month": "JUN", "Year": "26", "ConsumoRS": "88.00" },
       { "ConsumoKW": "173", "Date": "20260810", "Month": "JUL", "Year": "26", "ConsumoRS": "163.99" },
       { "ConsumoKW": "168", "Date": "20260909", "Month": "AGO", "Year": "26", "ConsumoRS": "153.44" }
     ],

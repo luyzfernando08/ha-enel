@@ -39,18 +39,23 @@ reversa de uma API não documentada, que pode mudar sem aviso.
   mês anterior...").
 - **Consumo médio diário** (`sensor`, kWh/d) e **Gasto médio diário**
   (`sensor`, R$/d) — médias do ciclo de faturamento mais recente.
+- **Atualizar dados** (`button`, config) — força uma atualização imediata,
+  sem esperar o próximo ciclo de 6h. O estado do próprio botão já é o horário
+  do último aperto manual (padrão do HA); o atributo `ultima_atualizacao`
+  guarda o horário da última atualização bem-sucedida, seja manual (por esse
+  botão) ou automática (do ciclo periódico).
 
 O sensor de consumo traz em `historico` os últimos meses de consumo (kWh) e valor
 (R$) faturado, úteis para gráficos.
 
 O `entity_id` de cada entidade segue o padrão `<domínio>.enel_sp_<login antes
-do "@">_<chave>` (`domínio` é `sensor` ou `binary_sensor`) — por exemplo, para
-o login `fulano@example.com`, a fatura atual fica em
-`sensor.enel_sp_fulano_valor_fatura_atual` e o fornecimento normal em
-`binary_sensor.enel_sp_fulano_fornecimento_normal`. Se o login for CPF (sem
-`@`), usa ele inteiro. Essa formatação só vale na primeira vez que a
-entidade é criada; depois disso, renomear pela UI do HA é respeitado
-normalmente.
+do "@">_<chave>` (`domínio` é `sensor`, `binary_sensor` ou `button`) — por
+exemplo, para o login `fulano@example.com`, a fatura atual fica em
+`sensor.enel_sp_fulano_valor_fatura_atual`, o fornecimento normal em
+`binary_sensor.enel_sp_fulano_fornecimento_normal` e o botão de atualizar em
+`button.enel_sp_fulano_atualizar_dados`. Se o login for CPF (sem `@`), usa
+ele inteiro. Essa formatação só vale na primeira vez que a entidade é
+criada; depois disso, renomear pela UI do HA é respeitado normalmente.
 
 ## De onde vêm os dados de cada sensor
 
@@ -120,27 +125,48 @@ Painel de Energia.
 
 | Trecho da série | Endpoint (`Funcionalidad`) | Campo(s) de origem |
 |---|---|---|
-| Meses já fechados (base histórica) | `portalhistoryinfo` | `ET_MEDIA_CONS[].CONSUMO`, um ponto no dia 1 de cada mês — **exceto o mês mais recente**, descartado de propósito |
-| Mês em andamento, por hora | `smartmetergetconsumptionchartdata` | `T_GRAPHIC_HOUR[]` com `Register == "03"` (energia ativa) → `ConsumoKW` (kWh, apesar do nome), por `Date`+`Time` |
+| Ciclos já fechados (base histórica) | `smartmetergetconsumptionchartdata` | `T_GRAPHIC_MONTH[].ConsumoKW`, um ponto no início de cada ciclo — só os que já fecharam de verdade (ver abaixo). Fallback: `ET_MEDIA_CONS` do `portalhistoryinfo`, se o medidor não trouxer `T_GRAPHIC_MONTH` |
+| Ciclo em andamento, por hora | `smartmetergetconsumptionchartdata` | `T_GRAPHIC_HOUR[]` com `Register == "03"` (energia ativa) → `ConsumoKW` (kWh, apesar do nome), por `Date`+`Time` |
 
-O mês mais recente do histórico mensal é descartado porque ele cobre o mesmo
-período que os dados horários — somar os dois contaria o mesmo consumo duas
-vezes.
+Os dois trechos vêm da **mesma chamada** ao `smartmetergetconsumptionchartdata`,
+mas se comportam diferente quanto à janela de datas pedida
+(`StartDate`/`EndDate`, hoje fixada nos últimos 7 dias): `T_GRAPHIC_MONTH`
+devolve o histórico inteiro do medidor **independente dessa janela**
+(confirmado numa captura real: uma janela de 8 dias pedida trouxe 11 meses de
+histórico), enquanto `T_GRAPHIC_HOUR` só traz as horas dentro da janela
+pedida. Por isso a base histórica usa `T_GRAPHIC_MONTH` (mais completo que o
+`portalhistoryinfo`, que costuma trazer bem menos meses) e só a parte
+horária do ciclo em andamento precisa do truque abaixo.
 
-A API do medidor só devolve uma janela móvel dos últimos 7 dias por chamada —
-não dá pra pedir dias mais antigos depois que eles saem dessa janela. Por
-isso a integração mantém um **cache local por UC** (arquivo em
+**O ciclo de leitura do medidor não é necessariamente alinhado ao mês
+calendário** — o dia do mês em que ele fecha varia de conta pra conta e pode
+até mudar ao longo do tempo (não é um valor fixo, então o código nunca
+assume um dia específico). Numa captura real, por exemplo, o ciclo fechou em
+10/08 — um ponto de `T_GRAPHIC_MONTH` rotulado "JUL" tinha `Date` em agosto,
+porque é o ciclo que cobre majoritariamente julho mas só fecha em 10/08
+daquela conta. A resposta traz um campo `LastReading` (`AAAAMMDD`) com a
+data em que o ciclo mais recente fechou de verdade, seja qual for esse dia —
+essa é a fronteira real usada nos dois lados: só entram na base histórica os
+ciclos de `T_GRAPHIC_MONTH` com `Date <= LastReading`, e só entram na soma
+horária os pontos de `T_GRAPHIC_HOUR` com `Date > LastReading`. Usar o mês
+calendário (dia 1) como fronteira, em vez do `LastReading`, abriria uma
+lacuna entre a virada do mês e o fechamento de fato do ciclo (quando esse
+não cai no dia 1), e a seguir contaria esses mesmos dias em dobro assim que
+o ciclo fechasse e entrasse como total mensal fechado.
+
+Como `T_GRAPHIC_HOUR` é limitado à janela de 7 dias pedida, a integração
+mantém um **cache local por UC** (arquivo em
 `.storage/enel_sp_smartmeter_hours_<anlage>`) que vai fundindo cada nova
-janela de 7 dias recebida, acumulando o mês em andamento hora a hora em vez
-de descartar os dias que saem da janela a cada atualização. O cache é limpo
-sempre que o mês vira (os dias antigos passam a vir prontos, como total
-fechado, do histórico mensal). Na prática isso só deixa uma lacuna real se a
-integração instalar no meio do mês (sem cobrir os dias anteriores à
-instalação) ou se o Home Assistant ficar mais de 7 dias seguidos sem
-conseguir atualizar.
+janela recebida, acumulando o ciclo em andamento hora a hora em vez de
+descartar os dias que saem da janela a cada atualização. O cache é podado
+pelo mesmo `LastReading`: assim que o ciclo fecha, os dias que ele cobre
+saem do cache (já entram pelo total mensal fechado) e só sobra o que ainda
+não fechou. Na prática isso só deixa uma lacuna real se a integração
+instalar no meio de um ciclo (sem cobrir os dias anteriores à instalação) ou
+se o Home Assistant ficar mais de 7 dias seguidos sem conseguir atualizar.
 
 A cada atualização a série inteira é recalculada a partir do histórico
-mensal + cache acumulado e reenviada (é seguro, o Home Assistant faz
+fechado + cache acumulado e reenviada (é seguro, o Home Assistant faz
 *upsert* por horário), então não há risco de contar consumo em duplicidade
 — e correções que a Enel eventualmente fizer em dados passados (leitura
 estimada trocada por real, por exemplo) se propagam sozinhas no próximo

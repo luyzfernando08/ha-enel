@@ -86,6 +86,11 @@
       "medidor_inteligente": {
         "name": "Medidor inteligente"
       }
+    },
+    "button": {
+      "atualizar_dados": {
+        "name": "Atualizar dados"
+      }
     }
   }
 }

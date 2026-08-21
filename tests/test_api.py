@@ -521,6 +521,80 @@ def test_build_consumption_statistics_empty_inputs():
     assert build_consumption_statistics([], []) == []
 
 
+def test_smart_meter_month_history_converts_abbreviated_months():
+    from custom_components.enel_sp.api import smart_meter_month_history
+
+    chart_data = _load("smartmetergetconsumptionchartdata")["Body"]
+
+    months = smart_meter_month_history(chart_data)
+
+    # Fixture tem 3 meses (JUN/JUL/AGO 26) — mais do que o portalhistoryinfo
+    # (só JUL/AGO), refletindo a captura real: T_GRAPHIC_MONTH não é limitado
+    # pela janela de StartDate/EndDate pedida, ao contrário de T_GRAPHIC_HOUR.
+    assert months == [
+        {"MESREF": "06/2026", "CONSUMO": 96.0, "DATA_FECHAMENTO": "20260710"},
+        {"MESREF": "07/2026", "CONSUMO": 173.0, "DATA_FECHAMENTO": "20260810"},
+        {"MESREF": "08/2026", "CONSUMO": 168.0, "DATA_FECHAMENTO": "20260909"},
+    ]
+
+
+def test_smart_meter_month_history_feeds_build_consumption_statistics():
+    """Regressão: T_GRAPHIC_MONTH deve poder ser usado como `monthly_history`
+    de `build_consumption_statistics` sem nenhuma conversão extra — foi por
+    isso que `smart_meter_month_history` produz o mesmo formato do
+    ET_MEDIA_CONS (MESREF/CONSUMO)."""
+    from custom_components.enel_sp.api import (
+        build_consumption_statistics,
+        smart_meter_month_history,
+    )
+
+    chart_data = _load("smartmetergetconsumptionchartdata")["Body"]
+    monthly_history = smart_meter_month_history(chart_data)
+
+    points = build_consumption_statistics(monthly_history, chart_data["T_GRAPHIC_HOUR"])
+
+    # 3 meses no fixture, o mais recente (AGO) descartado -> 2 pontos mensais
+    # (JUN, JUL) + 3 pontos horários (registrador "03").
+    monthly_points = points[:2]
+    assert [p["sum"] for p in monthly_points] == [96.0, 96.0 + 173.0]
+
+
+def test_build_consumption_statistics_last_reading_avoids_double_count_across_month_turn():
+    """Regressão do cenário descrito pelo usuário: o ciclo de leitura não
+    fecha necessariamente no dia 1 (aqui, no dia 10, mas isso varia por conta
+    e não é um valor fixo) — sem usar `last_reading` como fronteira, um
+    ponto horário de antes do fechamento (já coberto pelo mês fechado) seria
+    somado de novo, contando o mesmo consumo duas vezes assim que esse ciclo
+    aparecesse como mês fechado em `monthly_history`."""
+    from custom_components.enel_sp.api import build_consumption_statistics
+
+    last_reading = "20260810"  # ciclo mais recente fechou em 10/08.
+    monthly_history = [
+        {"MESREF": "07/2026", "CONSUMO": 173.0, "DATA_FECHAMENTO": "20260810"},
+        # Ainda em andamento (fecha só em 09/09) -> não deve entrar na soma.
+        {"MESREF": "08/2026", "CONSUMO": 168.0, "DATA_FECHAMENTO": "20260909"},
+    ]
+    hourly_data = [
+        # No mesmo dia do fechamento (10/08) ou antes: já contado no mês
+        # fechado de julho -> precisa ser ignorado aqui.
+        {
+            "Register": "03", "Date": "20260810", "Time": "230000",
+            "ConsumoKW": "1.00",
+        },
+        # Depois do fechamento: ainda não contado em nenhum mês -> soma.
+        {
+            "Register": "03", "Date": "20260811", "Time": "000000",
+            "ConsumoKW": "0.50",
+        },
+    ]
+
+    points = build_consumption_statistics(monthly_history, hourly_data, last_reading)
+
+    assert len(points) == 2  # 1 mês fechado (julho) + 1 ponto horário (dia 11).
+    assert points[0]["sum"] == 173.0
+    assert points[1]["sum"] == 173.0 + 0.50
+
+
 @pytest.mark.asyncio
 async def test_smart_meter_chart_data_request_shape():
     from custom_components.enel_sp.const import SMARTMETER_CHART_URL

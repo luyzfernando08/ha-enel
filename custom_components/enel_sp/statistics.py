@@ -9,7 +9,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
+from homeassistant.components.recorder.models import (
+    StatisticData,
+    StatisticMeanType,
+    StatisticMetaData,
+)
 from homeassistant.components.recorder.statistics import async_add_external_statistics
 from homeassistant.core import HomeAssistant
 
@@ -29,6 +33,7 @@ def async_import_consumption_statistics(
     installation: Installation,
     monthly_history: list[dict[str, Any]],
     hourly_data: list[dict[str, Any]],
+    last_reading: str | None = None,
 ) -> None:
     """Recalcula e reenvia a série de consumo inteira dessa UC.
 
@@ -36,13 +41,15 @@ def async_import_consumption_statistics(
     recomputada do zero a partir da mesma fonte de dados, e o import de
     estatísticas externas do HA faz upsert por timestamp.
     """
-    points = build_consumption_statistics(monthly_history, hourly_data)
+    points = build_consumption_statistics(monthly_history, hourly_data, last_reading)
     if not points:
         return
 
     name = installation.nickname or installation.address or installation.anlage
     metadata = StatisticMetaData(
-        has_mean=False,
+        # É um registrador cumulativo (só soma), sem média — "has_mean" está
+        # obsoleto desde o HA 2025.11 e some no 2026.11 em favor de mean_type.
+        mean_type=StatisticMeanType.NONE,
         has_sum=True,
         name=f"Enel SP consumo ({name})",
         source=DOMAIN,

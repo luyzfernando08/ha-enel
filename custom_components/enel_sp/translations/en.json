@@ -86,6 +86,11 @@
       "medidor_inteligente": {
         "name": "Smart meter"
       }
+    },
+    "button": {
+      "atualizar_dados": {
+        "name": "Refresh data"
+      }
     }
   }
 }
