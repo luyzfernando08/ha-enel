@@ -1,10 +1,10 @@
 {
   "domain": "enel_sp",
   "name": "Enel São Paulo",
-  "codeowners": ["@luyzfernando"],
+  "codeowners": ["@luyzfernando08"],
   "config_flow": true,
-  "documentation": "https://github.com/luyzfernando/ha-enel",
-  "issue_tracker": "https://github.com/luyzfernando/ha-enel/issues",
+  "documentation": "https://github.com/luyzfernando08/ha-enel",
+  "issue_tracker": "https://github.com/luyzfernando08/ha-enel/issues",
   "iot_class": "cloud_polling",
   "requirements": [],
   "version": "0.1.0"
