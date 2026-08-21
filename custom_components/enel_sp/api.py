@@ -189,7 +189,11 @@ def build_consumption_statistics(
         try:
             mm, yyyy = mesref.split("/")
             sort_key = f"{yyyy}{mm}"
-            start = datetime(int(yyyy), int(mm), 1, tzinfo=timezone.utc)
+            # Precisa ser fuso horário de São Paulo, igual aos pontos horários
+            # abaixo: meia-noite UTC do dia 1 é 21h do dia 30 do mês anterior
+            # em horário local, e o HA agrupa "Mês" pelo fuso local — isso
+            # jogava o ponto inteiro pro mês errado (o anterior).
+            start = datetime(int(yyyy), int(mm), 1, tzinfo=_SAO_PAULO_TZ)
             months.append((sort_key, start, float(consumo)))
         except (ValueError, TypeError):
             continue

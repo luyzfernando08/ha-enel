@@ -19,6 +19,7 @@ from .api import (
 )
 from .const import DEFAULT_UPDATE_INTERVAL, DOMAIN
 from .pdf import async_save_bill_pdf
+from .smartmeter_cache import async_merge_hourly_points
 from .statistics import async_import_consumption_statistics
 
 _LOGGER = logging.getLogger(__name__)
@@ -77,11 +78,17 @@ class EnelSPCoordinator(DataUpdateCoordinator[EnelSPData]):
         # atualização inteira (nem disparar reautenticação/retry).
         try:
             chart_data = await self.client.async_get_smart_meter_chart_data(installation)
+            # A API só devolve os últimos 7 dias por chamada: funde no cache
+            # local acumulado da UC em vez de usar só a janela desta chamada,
+            # senão dias que saem da janela seriam perdidos a cada atualização.
+            hourly_points = await async_merge_hourly_points(
+                self.hass, installation.anlage, chart_data.get("T_GRAPHIC_HOUR", [])
+            )
             async_import_consumption_statistics(
                 self.hass,
                 installation,
                 monthly_history,
-                chart_data.get("T_GRAPHIC_HOUR", []),
+                hourly_points,
             )
         except (EnelSPApiError, aiohttp.ClientError) as err:
             _LOGGER.warning("Could not import smart meter statistics: %s", err)

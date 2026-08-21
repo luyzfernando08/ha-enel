@@ -16,8 +16,8 @@ from . import EnelSPConfigEntry
 from .entity import EnelSPBaseEntity
 
 BILL_DESCRIPTION = SensorEntityDescription(
-    key="valor_proxima_fatura",
-    translation_key="valor_proxima_fatura",
+    key="valor_fatura_atual",
+    translation_key="valor_fatura_atual",
     device_class=SensorDeviceClass.MONETARY,
     native_unit_of_measurement="BRL",
 )
@@ -34,13 +34,6 @@ TARIFF_FLAG_DESCRIPTION = SensorEntityDescription(
     key="bandeira_tarifaria",
     translation_key="bandeira_tarifaria",
     icon="mdi:flag",
-)
-
-SMART_METER_DESCRIPTION = SensorEntityDescription(
-    key="medidor_inteligente",
-    translation_key="medidor_inteligente",
-    icon="mdi:meter-electric",
-    entity_category=EntityCategory.DIAGNOSTIC,
 )
 
 NEXT_READING_DATE_DESCRIPTION = SensorEntityDescription(
@@ -143,7 +136,6 @@ async def async_setup_entry(
             EnelSPBillSensor(coordinator, BILL_DESCRIPTION),
             EnelSPConsumptionSensor(coordinator, CONSUMPTION_DESCRIPTION),
             EnelSPTariffFlagSensor(coordinator, TARIFF_FLAG_DESCRIPTION),
-            EnelSPSmartMeterSensor(coordinator, SMART_METER_DESCRIPTION),
             EnelSPNextReadingDateSensor(coordinator, NEXT_READING_DATE_DESCRIPTION),
             EnelSPCurrentReadingDateSensor(coordinator, CURRENT_READING_DATE_DESCRIPTION),
             EnelSPPreviousMeterReadingSensor(coordinator, PREVIOUS_METER_READING_DESCRIPTION),
@@ -164,7 +156,7 @@ class EnelSPEntity(EnelSPBaseEntity, SensorEntity):
 
 
 class EnelSPBillSensor(EnelSPEntity):
-    """Valor da próxima fatura em aberto (ou a mais recente não paga)."""
+    """Valor da fatura atual em aberto (a mais recente não paga)."""
 
     @property
     def native_value(self) -> float | None:
@@ -206,18 +198,6 @@ class EnelSPTariffFlagSensor(EnelSPEntity):
     @property
     def native_value(self) -> str | None:
         return self._data.tariff_flag or None
-
-
-class EnelSPSmartMeterSensor(EnelSPEntity):
-    """Indica se a unidade consumidora tem medidor inteligente."""
-
-    @property
-    def native_value(self) -> str:
-        return "Sim" if self._data.installation.smart_meter else "Não"
-
-    @property
-    def extra_state_attributes(self) -> dict:
-        return {"numero_serie": self._data.installation.serial}
 
 
 class EnelSPNextReadingDateSensor(EnelSPEntity):
@@ -321,7 +301,7 @@ class EnelSPAccountStatusSensor(EnelSPEntity):
 class EnelSPCurrentEstimatedAmountSensor(EnelSPEntity):
     """Valor estimado da conta do período em andamento.
 
-    Diferente da "Próxima fatura": esse valor existe e é atualizado durante
+    Diferente da "Fatura atual": esse valor existe e é atualizado durante
     o ciclo, antes da fatura ser emitida de fato.
     """
 

@@ -9,10 +9,10 @@ reversa de uma API não documentada, que pode mudar sem aviso.
 
 ## Entidades criadas por unidade consumidora
 
-- **Próxima fatura** (`sensor`, R$) — valor e vencimento da conta em aberto mais recente.
+- **Fatura atual** (`sensor`, R$) — valor e vencimento da conta em aberto mais recente.
 - **Consumo do período** (`sensor`, kWh) — consumo do ciclo de faturamento atual.
 - **Bandeira tarifária** (`sensor`) — verde / amarela / vermelha 1 / vermelha 2.
-- **Medidor inteligente** (`sensor`, diagnóstico) — indica se a UC tem smart meter.
+- **Medidor inteligente** (`binary_sensor`, diagnóstico) — indica se a UC tem smart meter.
 - **Data da leitura atual** / **Data da próxima leitura** (`sensor`, timestamp).
 - **Valor do medidor atual** (`sensor`, kWh, sem casas decimais) — leitura do
   registrador do medidor.
@@ -28,11 +28,12 @@ reversa de uma API não documentada, que pode mudar sem aviso.
   consultada estiver em aberto (não só a mais recente), senão `Nenhuma conta
   em aberto`. Atributos: `quantidade_pendentes`, `valor_total_pendente`,
   `meses_pendentes`.
-- **Fornecimento suspenso** (`binary_sensor`, classe `problem`) — indica corte
-  por falta de pagamento. Atributo `mensagem` quando disponível.
+- **Fornecimento normal** (`binary_sensor`, diagnóstico) — `ligado` quando o
+  fornecimento está normal, `desligado` quando há corte por falta de
+  pagamento. Atributo `mensagem` quando disponível.
 - **Valor estimado atual** (`sensor`, R$) — estimativa da conta do ciclo em
   andamento, atualizada antes mesmo da fatura ser emitida (diferente da
-  "Próxima fatura", que só existe depois que a conta já foi gerada).
+  "Fatura atual", que só existe depois que a conta já foi gerada).
 - **Mensagem de análise da fatura** (`sensor`) — resumo da Enel sobre a
   variação da conta mais recente (ex.: "Você gastou R$ 10,55 a menos que o
   mês anterior...").
@@ -44,9 +45,9 @@ O sensor de consumo traz em `historico` os últimos meses de consumo (kWh) e val
 
 O `entity_id` de cada entidade segue o padrão `<domínio>.enel_sp_<login antes
 do "@">_<chave>` (`domínio` é `sensor` ou `binary_sensor`) — por exemplo, para
-o login `fulano@example.com`, a próxima fatura fica em
-`sensor.enel_sp_fulano_valor_proxima_fatura` e o fornecimento suspenso em
-`binary_sensor.enel_sp_fulano_fornecimento_suspenso`. Se o login for CPF (sem
+o login `fulano@example.com`, a fatura atual fica em
+`sensor.enel_sp_fulano_valor_fatura_atual` e o fornecimento normal em
+`binary_sensor.enel_sp_fulano_fornecimento_normal`. Se o login for CPF (sem
 `@`), usa ele inteiro. Essa formatação só vale na primeira vez que a
 entidade é criada; depois disso, renomear pela UI do HA é respeitado
 normalmente.
@@ -60,18 +61,18 @@ As três primeiras vêm de uma leva de chamadas feita a cada atualização; o
 
 | Sensor (chave) | Endpoint (`Funcionalidad`) | Campo(s) de origem |
 |---|---|---|
-| Próxima fatura (`valor_proxima_fatura`) | `portalinfo` | `ET_CONTAS[]` com `SITUACAO != "Paga"` (a mais recente por `VENCIMENTO`) → `MONTANTE`. Atributos: `VENCIMENTO`, `SITUACAO`, `ANO_MES_REF`, `COD_BARRAS_NOVO`/`O_COD_BARRAS` |
+| Fatura atual (`valor_fatura_atual`) | `portalinfo` | `ET_CONTAS[]` com `SITUACAO != "Paga"` (a mais recente por `VENCIMENTO`) → `MONTANTE`. Atributos: `VENCIMENTO`, `SITUACAO`, `ANO_MES_REF`, `COD_BARRAS_NOVO`/`O_COD_BARRAS` |
 | Consumo do período (`consumo_periodo_atual`) | `getAnaliseConsumo` | `ET_INSTALACAO[]` (item com `ANLAGE` da UC) → `ATUAL_CONSUMO`. Atributos: `PERIODO` (mesma resposta) e `historico` (de `portalhistoryinfo` → `ET_MEDIA_CONS`) |
 | Bandeira tarifária (`bandeira_tarifaria`) | `currentuser` | `E_BANDEIRA` |
-| Medidor inteligente (`medidor_inteligente`) | `currentuser` | `ET_INST[].SMARTMETER == "X"`. Atributo `numero_serie`: `ET_INST[].SERIE` |
+| Medidor inteligente (`medidor_inteligente`, `binary_sensor`) | `currentuser` | `ET_INST[].SMARTMETER == "X"`. Atributo `numero_serie`: `ET_INST[].SERIE` |
 | Data da leitura atual (`data_leitura_atual`) | `billanalysis` | `E_DT_LEITURA_ATUAL` (`YYYYMMDD`) |
 | Data da próxima leitura (`data_proxima_leitura`) | `billanalysis` | `E_PROX_LEIT` (texto tipo "10 de Setembro", sem ano — o ano é calculado a partir de `E_DT_LEITURA_ATUAL`) |
 | Valor do medidor atual (`valor_medidor_atual`) | `billanalysis` | `ET_MENU_RAPIDO[]` (item `ID == "LEITATUAL"`) → `VALOR2` |
 | Valor do medidor anterior (`valor_medidor_anterior`) | `billanalysis` + `getAnaliseConsumo` | **Calculado**, não vem pronto: `VALOR2 - ATUAL_CONSUMO`, arredondado. Usa o mesmo `ATUAL_CONSUMO` do sensor "Consumo do período" (não `E_CONS_TOTAL`/`E_CONSTANTE` do `billanalysis`, que se referem ao ciclo de faturamento da última fatura, não ao período atual) |
 | Link da fatura em PDF (`link_fatura_pdf`) | `generatepdf` | `E_BIN_FAT` (PDF em base64, decodificado e salvo em disco) — veja a seção abaixo |
-| Código Pix (`codigo_pix`) | `portalinfo` | Mesmo item de `ET_CONTAS[]` da próxima fatura → campo `QRCODE`. Se passar de 255 caracteres (limite de estado do HA), o valor completo vai pro atributo `codigo_completo` |
+| Código Pix (`codigo_pix`) | `portalinfo` | Mesmo item de `ET_CONTAS[]` da fatura atual → campo `QRCODE`. Se passar de 255 caracteres (limite de estado do HA), o valor completo vai pro atributo `codigo_completo` |
 | Status da conta (`status_conta`) | `portalinfo` | Todo o `ET_CONTAS[]` (não só a mais recente) — `"Conta pendente"` se algum item tiver `SITUACAO != "Paga"` |
-| Fornecimento suspenso (`fornecimento_suspenso`, `binary_sensor`) | `getAnaliseConsumo` | `ET_INSTALACAO[]` → `SUSPENSA == "X"`. Atributo `mensagem`: `MSG_SUSPENSAO` |
+| Fornecimento normal (`fornecimento_normal`, `binary_sensor`) | `getAnaliseConsumo` | `ET_INSTALACAO[]` → `SUSPENSA != "X"` (invertido: `ligado` = normal). Atributo `mensagem`: `MSG_SUSPENSAO` |
 | Valor estimado atual (`valor_estimado_atual`) | `getAnaliseConsumo` | `ET_INSTALACAO[]` → `ATUAL_VALOR` |
 | Mensagem de análise da fatura (`mensagem_analise_fatura`) | `billanalysis` | `E_MSG`/`DescripcionResultado` |
 | Consumo médio diário (`consumo_medio_diario`) | `billanalysis` | `E_CONS_DIA` |
@@ -120,19 +121,30 @@ Painel de Energia.
 | Trecho da série | Endpoint (`Funcionalidad`) | Campo(s) de origem |
 |---|---|---|
 | Meses já fechados (base histórica) | `portalhistoryinfo` | `ET_MEDIA_CONS[].CONSUMO`, um ponto no dia 1 de cada mês — **exceto o mês mais recente**, descartado de propósito |
-| Últimos ~7 dias, por hora | `smartmetergetconsumptionchartdata` | `T_GRAPHIC_HOUR[]` com `Register == "03"` (energia ativa) → `ConsumoKW` (kWh, apesar do nome), por `Date`+`Time` |
+| Mês em andamento, por hora | `smartmetergetconsumptionchartdata` | `T_GRAPHIC_HOUR[]` com `Register == "03"` (energia ativa) → `ConsumoKW` (kWh, apesar do nome), por `Date`+`Time` |
 
 O mês mais recente do histórico mensal é descartado porque ele cobre o mesmo
-período que a janela horária — somar os dois contaria o mesmo consumo duas
-vezes. Isso deixa uma lacuna nos dias entre o início do mês em andamento e "7
-dias atrás" até esse mês fechar (vira uma fatura); quando fecha, o total
-inteiro entra de uma vez como um degrau no dia 1, não distribuído por hora.
+período que os dados horários — somar os dois contaria o mesmo consumo duas
+vezes.
 
-A cada atualização a série inteira é recalculada e reenviada (é seguro, o
-Home Assistant faz *upsert* por horário), então não há risco de contar
-consumo em duplicidade nem de a soma acumulada diminuir — e correções que a
-Enel eventualmente fizer em dados passados (leitura estimada trocada por
-real, por exemplo) se propagam sozinhas no próximo ciclo.
+A API do medidor só devolve uma janela móvel dos últimos 7 dias por chamada —
+não dá pra pedir dias mais antigos depois que eles saem dessa janela. Por
+isso a integração mantém um **cache local por UC** (arquivo em
+`.storage/enel_sp_smartmeter_hours_<anlage>`) que vai fundindo cada nova
+janela de 7 dias recebida, acumulando o mês em andamento hora a hora em vez
+de descartar os dias que saem da janela a cada atualização. O cache é limpo
+sempre que o mês vira (os dias antigos passam a vir prontos, como total
+fechado, do histórico mensal). Na prática isso só deixa uma lacuna real se a
+integração instalar no meio do mês (sem cobrir os dias anteriores à
+instalação) ou se o Home Assistant ficar mais de 7 dias seguidos sem
+conseguir atualizar.
+
+A cada atualização a série inteira é recalculada a partir do histórico
+mensal + cache acumulado e reenviada (é seguro, o Home Assistant faz
+*upsert* por horário), então não há risco de contar consumo em duplicidade
+— e correções que a Enel eventualmente fizer em dados passados (leitura
+estimada trocada por real, por exemplo) se propagam sozinhas no próximo
+ciclo.
 
 ## Instalação
 

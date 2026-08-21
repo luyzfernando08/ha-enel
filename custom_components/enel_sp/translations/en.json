@@ -36,17 +36,14 @@
   },
   "entity": {
     "sensor": {
-      "valor_proxima_fatura": {
-        "name": "Next bill"
+      "valor_fatura_atual": {
+        "name": "Current bill"
       },
       "consumo_periodo_atual": {
         "name": "Period consumption"
       },
       "bandeira_tarifaria": {
         "name": "Tariff flag"
-      },
-      "medidor_inteligente": {
-        "name": "Smart meter"
       },
       "data_proxima_leitura": {
         "name": "Next reading date"
@@ -83,8 +80,11 @@
       }
     },
     "binary_sensor": {
-      "fornecimento_suspenso": {
-        "name": "Supply suspended"
+      "fornecimento_normal": {
+        "name": "Supply normal"
+      },
+      "medidor_inteligente": {
+        "name": "Smart meter"
       }
     }
   }

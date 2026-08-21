@@ -495,8 +495,16 @@ def test_build_consumption_statistics_drops_current_month_and_chains_hourly():
     hourly_points = points[1:]
 
     assert monthly_points[-1]["sum"] == 173.0
-    assert monthly_points[0]["start"].year == 2026
-    assert monthly_points[0]["start"].month == 7
+    # Regressão: precisa ser meia-noite em horário de São Paulo, não UTC —
+    # meia-noite UTC do dia 1 é 21h do dia 30 do mês anterior em horário
+    # local, e o HA agrupa estatísticas por "Mês" usando o fuso local, então
+    # UTC jogava esse ponto inteiro pro mês errado.
+    from datetime import datetime as _datetime
+    from zoneinfo import ZoneInfo
+
+    sp_tz = ZoneInfo("America/Sao_Paulo")
+    assert monthly_points[0]["start"] == _datetime(2026, 7, 1, tzinfo=sp_tz)
+    assert monthly_points[0]["start"].astimezone(sp_tz).month == 7
 
     # Pontos horários em ordem cronológica, continuando a soma cumulativa.
     assert [p["start"].hour for p in hourly_points] == [22, 23, 0]
