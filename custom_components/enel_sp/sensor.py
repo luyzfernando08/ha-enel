@@ -16,8 +16,8 @@ from . import EnelSPConfigEntry
 from .entity import EnelSPBaseEntity
 
 BILL_DESCRIPTION = SensorEntityDescription(
-    key="valor_fatura_atual",
-    translation_key="valor_fatura_atual",
+    key="valor_ultima_fatura_fechada",
+    translation_key="valor_ultima_fatura_fechada",
     device_class=SensorDeviceClass.MONETARY,
     native_unit_of_measurement="BRL",
 )
@@ -100,6 +100,13 @@ CURRENT_ESTIMATED_AMOUNT_DESCRIPTION = SensorEntityDescription(
     native_unit_of_measurement="BRL",
 )
 
+CURRENT_ESTIMATED_CONSUMPTION_DESCRIPTION = SensorEntityDescription(
+    key="consumo_estimado_atual",
+    translation_key="consumo_estimado_atual",
+    device_class=SensorDeviceClass.ENERGY,
+    native_unit_of_measurement="kWh",
+)
+
 BILL_ANALYSIS_MESSAGE_DESCRIPTION = SensorEntityDescription(
     key="mensagem_analise_fatura",
     translation_key="mensagem_analise_fatura",
@@ -144,6 +151,9 @@ async def async_setup_entry(
             EnelSPPixCodeSensor(coordinator, PIX_CODE_DESCRIPTION),
             EnelSPAccountStatusSensor(coordinator, ACCOUNT_STATUS_DESCRIPTION),
             EnelSPCurrentEstimatedAmountSensor(coordinator, CURRENT_ESTIMATED_AMOUNT_DESCRIPTION),
+            EnelSPCurrentEstimatedConsumptionSensor(
+                coordinator, CURRENT_ESTIMATED_CONSUMPTION_DESCRIPTION
+            ),
             EnelSPBillAnalysisMessageSensor(coordinator, BILL_ANALYSIS_MESSAGE_DESCRIPTION),
             EnelSPDailyConsumptionSensor(coordinator, DAILY_CONSUMPTION_DESCRIPTION),
             EnelSPDailyAmountSensor(coordinator, DAILY_AMOUNT_DESCRIPTION),
@@ -156,7 +166,10 @@ class EnelSPEntity(EnelSPBaseEntity, SensorEntity):
 
 
 class EnelSPBillSensor(EnelSPEntity):
-    """Valor da fatura atual em aberto (a mais recente não paga)."""
+    """Valor da última fatura fechada (a mais recente não paga — ou seja, já
+    emitida, ainda que não seja necessariamente do ciclo mais recente de
+    todos: ver "kWh estimado atual"/"Valor estimado atual" pro ciclo que
+    ainda está em aberto, sem fatura)."""
 
     @property
     def native_value(self) -> float | None:
@@ -299,15 +312,32 @@ class EnelSPAccountStatusSensor(EnelSPEntity):
 
 
 class EnelSPCurrentEstimatedAmountSensor(EnelSPEntity):
-    """Valor estimado da conta do período em andamento.
+    """Valor estimado da conta do ciclo em andamento (projeção).
 
-    Diferente da "Fatura atual": esse valor existe e é atualizado durante
-    o ciclo, antes da fatura ser emitida de fato.
+    Diferente da "Última fatura fechada": esse valor é atualizado durante o
+    ciclo, antes da fatura existir. Em UCs com medidor inteligente, vem da projeção
+    de verdade (``getSmartmeterData``); sem medidor inteligente, cai no
+    ``ATUAL_VALOR`` do ``getAnaliseConsumo`` (que na prática costuma refletir
+    a última fatura já emitida, não uma projeção — limitação da própria API
+    nesse caso).
     """
 
     @property
     def native_value(self) -> float | None:
         return self._data.current_amount
+
+
+class EnelSPCurrentEstimatedConsumptionSensor(EnelSPEntity):
+    """Consumo estimado (projeção, em kWh) do ciclo em andamento.
+
+    Diferente do "Consumo do período" (esse é o consumo do último ciclo já
+    fechado): vem de ``getSmartmeterData`` → ``ES_DADOS_CONSUMO.CONSUMO_PROJECAO``,
+    só disponível em UCs com medidor inteligente.
+    """
+
+    @property
+    def native_value(self) -> float | None:
+        return self._data.current_estimated_consumption_kwh
 
 
 class EnelSPBillAnalysisMessageSensor(EnelSPEntity):

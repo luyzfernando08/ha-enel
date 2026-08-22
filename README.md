@@ -9,7 +9,7 @@ reversa de uma API não documentada, que pode mudar sem aviso.
 
 ## Entidades criadas por unidade consumidora
 
-- **Fatura atual** (`sensor`, R$) — valor e vencimento da conta em aberto mais recente.
+- **Última fatura fechada** (`sensor`, R$) — valor e vencimento da conta em aberto mais recente.
 - **Consumo do período** (`sensor`, kWh) — consumo do ciclo de faturamento atual.
 - **Bandeira tarifária** (`sensor`) — verde / amarela / vermelha 1 / vermelha 2.
 - **Medidor inteligente** (`binary_sensor`, diagnóstico) — indica se a UC tem smart meter.
@@ -31,9 +31,13 @@ reversa de uma API não documentada, que pode mudar sem aviso.
 - **Fornecimento normal** (`binary_sensor`, diagnóstico) — `ligado` quando o
   fornecimento está normal, `desligado` quando há corte por falta de
   pagamento. Atributo `mensagem` quando disponível.
-- **Valor estimado atual** (`sensor`, R$) — estimativa da conta do ciclo em
-  andamento, atualizada antes mesmo da fatura ser emitida (diferente da
-  "Fatura atual", que só existe depois que a conta já foi gerada).
+- **Valor estimado atual** (`sensor`, R$) e **kWh estimado atual** (`sensor`,
+  kWh) — projeção do valor e do consumo do ciclo em andamento, atualizada
+  antes mesmo da fatura ser emitida (diferente da "Última fatura fechada" e
+  do "Consumo do período", que só existem depois que o ciclo já fechou). Só
+  em UCs com medidor inteligente; sem ele, "Valor estimado atual" cai numa
+  estimativa que a Enel costuma manter igual ao valor da última fatura já
+  emitida até o próximo ciclo fechar, e "kWh estimado atual" fica vazio.
 - **Mensagem de análise da fatura** (`sensor`) — resumo da Enel sobre a
   variação da conta mais recente (ex.: "Você gastou R$ 10,55 a menos que o
   mês anterior...").
@@ -50,8 +54,8 @@ O sensor de consumo traz em `historico` os últimos meses de consumo (kWh) e val
 
 O `entity_id` de cada entidade segue o padrão `<domínio>.enel_sp_<login antes
 do "@">_<chave>` (`domínio` é `sensor`, `binary_sensor` ou `button`) — por
-exemplo, para o login `fulano@example.com`, a fatura atual fica em
-`sensor.enel_sp_fulano_valor_fatura_atual`, o fornecimento normal em
+exemplo, para o login `fulano@example.com`, a última fatura fechada fica em
+`sensor.enel_sp_fulano_valor_ultima_fatura_fechada`, o fornecimento normal em
 `binary_sensor.enel_sp_fulano_fornecimento_normal` e o botão de atualizar em
 `button.enel_sp_fulano_atualizar_dados`. Se o login for CPF (sem `@`), usa
 ele inteiro. Essa formatação só vale na primeira vez que a entidade é
@@ -66,7 +70,7 @@ As três primeiras vêm de uma leva de chamadas feita a cada atualização; o
 
 | Sensor (chave) | Endpoint (`Funcionalidad`) | Campo(s) de origem |
 |---|---|---|
-| Fatura atual (`valor_fatura_atual`) | `portalinfo` | `ET_CONTAS[]` com `SITUACAO != "Paga"` (a mais recente por `VENCIMENTO`) → `MONTANTE`. Atributos: `VENCIMENTO`, `SITUACAO`, `ANO_MES_REF`, `COD_BARRAS_NOVO`/`O_COD_BARRAS` |
+| Última fatura fechada (`valor_ultima_fatura_fechada`) | `portalinfo` | `ET_CONTAS[]` com `SITUACAO != "Paga"` (a mais recente por `VENCIMENTO`) → `MONTANTE`. Atributos: `VENCIMENTO`, `SITUACAO`, `ANO_MES_REF`, `COD_BARRAS_NOVO`/`O_COD_BARRAS` |
 | Consumo do período (`consumo_periodo_atual`) | `getAnaliseConsumo` | `ET_INSTALACAO[]` (item com `ANLAGE` da UC) → `ATUAL_CONSUMO`. Atributos: `PERIODO` (mesma resposta) e `historico` (de `portalhistoryinfo` → `ET_MEDIA_CONS`) |
 | Bandeira tarifária (`bandeira_tarifaria`) | `currentuser` | `E_BANDEIRA` |
 | Medidor inteligente (`medidor_inteligente`, `binary_sensor`) | `currentuser` | `ET_INST[].SMARTMETER == "X"`. Atributo `numero_serie`: `ET_INST[].SERIE` |
@@ -75,10 +79,11 @@ As três primeiras vêm de uma leva de chamadas feita a cada atualização; o
 | Valor do medidor atual (`valor_medidor_atual`) | `billanalysis` | `ET_MENU_RAPIDO[]` (item `ID == "LEITATUAL"`) → `VALOR2` |
 | Valor do medidor anterior (`valor_medidor_anterior`) | `billanalysis` + `getAnaliseConsumo` | **Calculado**, não vem pronto: `VALOR2 - ATUAL_CONSUMO`, arredondado. Usa o mesmo `ATUAL_CONSUMO` do sensor "Consumo do período" (não `E_CONS_TOTAL`/`E_CONSTANTE` do `billanalysis`, que se referem ao ciclo de faturamento da última fatura, não ao período atual) |
 | Link da fatura em PDF (`link_fatura_pdf`) | `generatepdf` | `E_BIN_FAT` (PDF em base64, decodificado e salvo em disco) — veja a seção abaixo |
-| Código Pix (`codigo_pix`) | `portalinfo` | Mesmo item de `ET_CONTAS[]` da fatura atual → campo `QRCODE`. Se passar de 255 caracteres (limite de estado do HA), o valor completo vai pro atributo `codigo_completo` |
+| Código Pix (`codigo_pix`) | `portalinfo` | Mesmo item de `ET_CONTAS[]` da última fatura fechada → campo `QRCODE`. Se passar de 255 caracteres (limite de estado do HA), o valor completo vai pro atributo `codigo_completo` |
 | Status da conta (`status_conta`) | `portalinfo` | Todo o `ET_CONTAS[]` (não só a mais recente) — `"Conta pendente"` se algum item tiver `SITUACAO != "Paga"` |
 | Fornecimento normal (`fornecimento_normal`, `binary_sensor`) | `getAnaliseConsumo` | `ET_INSTALACAO[]` → `SUSPENSA != "X"` (invertido: `ligado` = normal). Atributo `mensagem`: `MSG_SUSPENSAO` |
-| Valor estimado atual (`valor_estimado_atual`) | `getAnaliseConsumo` | `ET_INSTALACAO[]` → `ATUAL_VALOR` |
+| Valor estimado atual (`valor_estimado_atual`) | `getSmartmeterData` (medidor inteligente) / `getAnaliseConsumo` (fallback) | `ES_DADOS_CONSUMO.VALOR_PROJECAO` — projeção de verdade do ciclo em aberto. Sem medidor inteligente, ou se essa chamada falhar, cai em `ET_INSTALACAO[].ATUAL_VALOR` (que na prática costuma refletir a última fatura já emitida, igual à "Última fatura fechada" — limitação da própria API nesse caso) |
+| kWh estimado atual (`consumo_estimado_atual`) | `getSmartmeterData` | `ES_DADOS_CONSUMO.CONSUMO_PROJECAO`. Só disponível em UCs com medidor inteligente — sem ele, o sensor fica vazio (sem fallback, ao contrário de "Valor estimado atual") |
 | Mensagem de análise da fatura (`mensagem_analise_fatura`) | `billanalysis` | `E_MSG`/`DescripcionResultado` |
 | Consumo médio diário (`consumo_medio_diario`) | `billanalysis` | `E_CONS_DIA` |
 | Gasto médio diário (`gasto_medio_diario`) | `billanalysis` | `E_VALOR_DIA` |
@@ -96,11 +101,13 @@ lado da Enel.
 
 ## Link da fatura em PDF — aviso de segurança
 
-O PDF é salvo em `config/www/enel_sp/<anlage>.pdf` e o sensor guarda a URL
-`.../local/enel_sp/<anlage>.pdf`. O Home Assistant serve automaticamente tudo
-que está em `config/www/` nesse caminho **sem exigir login** — é o mesmo
-mecanismo usado por outras integrações para expor fotos de câmera, por
-exemplo, não é uma falha específica desta integração.
+O PDF é salvo em `config/www/enel_sp/<anlage>.pdf` e o sensor guarda o
+caminho relativo `/local/enel_sp/<anlage>.pdf` (sem host — o navegador
+resolve em cima da origem de onde você estiver acessando o HA no momento).
+O Home Assistant serve automaticamente tudo que está em `config/www/` nesse
+caminho **sem exigir login** — é o mesmo mecanismo usado por outras
+integrações para expor fotos de câmera, por exemplo, não é uma falha
+específica desta integração.
 
 Na prática isso quer dizer que **qualquer um com acesso à rede/porta do seu
 HA consegue abrir esse link e ver a fatura** (nome, endereço, valores, código

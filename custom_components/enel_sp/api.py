@@ -1,84 +1,44 @@
-"""Cliente da API do portal de clientes da Enel São Paulo.
-
-Reproduz o fluxo de login do navegador em https://www.enel.com.br/pt-saopaulo/login.html:
-
-1. GET no ponto de entrada do SAML SSO para obter um ``sessionDataKey`` do
-   WSO2 Identity Server.
-2. POST das credenciais no mesmo endpoint de SAML SSO, que devolve um form
-   HTML de auto-submit contendo um ``SAMLResponse`` em base64 (SAML2 HTTP-POST
-   binding).
-3. POST desse ``SAMLResponse`` na Assertion Consumer Service URL do site, que
-   estabelece uma sessão autenticada (cookies) com o backend Adobe AEM.
-4. Chamada ao servlet ``currentuser`` para obter o ``access_token`` da conta
-   (um JWT de curta duração) e os identificadores SAP IS-U
-   (ANLAGE/VERTRAG/VKONT/PARTNER) necessários para consultar as APIs de
-   negócio hospedadas no Mulesoft.
-
-O header ``SID`` usado nessas APIs de negócio não é emitido pelo servidor: o
-app web oficial o gera no cliente com ``crypto.randomUUID()`` e o reaproveita
-durante a sessão, então fazemos o mesmo.
+"""Cliente das APIs de negócio do portal da Enel São Paulo (fatura, consumo,
+medidor inteligente, PDF). O login/SAML mora em ``auth.py``; este módulo cuida
+do que vem depois de logado.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
-import html
 import logging
 import re
-import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 import aiohttp
 
+from .auth import (
+    EnelSPAuthError,
+    EnelSPAuthMixin,
+    EnelSPError,
+    Installation,
+    _DEBUG_SNIPPET_LEN,
+    _extract_saml_response,  # noqa: F401  (re-exportado pra quem já importa daqui)
+    _host_of,
+)
 from .const import (
-    ACCOUNTS_ORIGIN,
-    ACS_URL,
     ANALISE_CONSUMO_URL,
     BILLANALYSIS_URL,
     CANAL,
     COD_SISTEMA,
-    CURRENTUSER_URL,
     GENERATE_PDF_URL,
     PORTALHISTORYINFO_URL,
     PORTALINFO_URL,
-    SAMLSSO_URL,
     SMARTMETER_ACTIVE_ENERGY_REGISTER,
     SMARTMETER_CHART_URL,
+    SMARTMETER_DATA_URL,
     WWW_ORIGIN,
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-
-def _host_of(url: str) -> str:
-    return urlsplit(url).hostname or ""
-
-
-# O formulário de auto-submit do WSO2 IS usa aspas simples nos atributos
-# (`name='SAMLResponse' value='...'`), diferente do que a maioria dos exemplos
-# de SAML por aí mostra (aspas duplas) — por isso aceitamos os dois estilos e
-# não fixamos a ordem dos atributos dentro da tag <input>.
-_SAML_INPUT_TAG_RE = re.compile(
-    r"<input\b[^>]*\bname=['\"]SAMLResponse['\"][^>]*>", re.IGNORECASE
-)
-_VALUE_ATTR_RE = re.compile(r"value=['\"]([^'\"]*)['\"]")
-
-
-def _extract_saml_response(html_text: str) -> str | None:
-    tag_match = _SAML_INPUT_TAG_RE.search(html_text)
-    if not tag_match:
-        return None
-    value_match = _VALUE_ATTR_RE.search(tag_match.group(0))
-    if not value_match:
-        return None
-    return value_match.group(1)
-
-# Quantos caracteres de uma resposta de erro HTML/JSON inesperada logar em
-# nível DEBUG quando uma etapa falha, para ajudar no diagnóstico sem lotar o log.
-_DEBUG_SNIPPET_LEN = 1500
 
 _PT_MONTHS = {
     "janeiro": 1, "fevereiro": 2, "marco": 3, "abril": 4, "maio": 5, "junho": 6,
@@ -310,34 +270,8 @@ def build_consumption_statistics(
     return statistics
 
 
-class EnelSPError(Exception):
-    """Erro base do cliente da Enel SP."""
-
-
-class EnelSPAuthError(EnelSPError):
-    """Levantado quando o login falha (credenciais erradas ou página de login inesperada)."""
-
-
 class EnelSPApiError(EnelSPError):
     """Levantado quando uma chamada de API de negócio falha ou retorna um erro."""
-
-
-@dataclass
-class Installation:
-    """Uma unidade consumidora (UC) vinculada à conta."""
-
-    anlage: str
-    vertrag: str
-    vkont: str
-    partner: str
-    address: str = ""
-    nickname: str = ""
-    smart_meter: bool = False
-    serial: str = ""
-
-    @property
-    def unique_id(self) -> str:
-        return self.anlage
 
 
 @dataclass
@@ -349,6 +283,9 @@ class EnelSPData:
     current_period: str = ""
     current_consumption_kwh: float | None = None
     current_amount: float | None = None
+    # Projeção do ciclo em aberto (getSmartmeterData), diferente de
+    # current_consumption_kwh (consumo do último ciclo já fechado).
+    current_estimated_consumption_kwh: float | None = None
     bills: list[dict[str, Any]] = field(default_factory=list)
     next_due_bill: dict[str, Any] | None = None
     history: list[dict[str, Any]] = field(default_factory=list)
@@ -371,164 +308,13 @@ def most_recent_bill(bills: list[dict[str, Any]]) -> dict[str, Any] | None:
     return max(bills, key=lambda b: b.get("VENCIMENTO") or "") if bills else None
 
 
-class EnelSPClient:
-    """Conversa com accounts.enel.com / www.enel.com.br / as APIs do Mulesoft."""
+class EnelSPClient(EnelSPAuthMixin):
+    """Conversa com accounts.enel.com / www.enel.com.br / as APIs do Mulesoft.
 
-    def __init__(self, session: aiohttp.ClientSession, username: str, password: str) -> None:
-        self._session = session
-        self._username = username
-        self._password = password
-        self._sid = str(uuid.uuid4())
-        self._jwt: str | None = None
-        self._enel_id: str | None = None
-        self._raw_current_user: dict[str, Any] = {}
-
-    async def async_login(self) -> dict[str, Any]:
-        """Executa o fluxo de login SAML completo e busca o perfil da conta.
-
-        Retorna o payload bruto ``currentUser`` (unidades consumidoras, bandeira
-        tarifária, ...).
-        """
-        _LOGGER.debug("Starting login (sid=%s)", self._sid)
-        session_data_key = await self._async_get_session_data_key()
-        saml_response = await self._async_submit_credentials(session_data_key)
-        await self._async_submit_saml_response(saml_response)
-        current_user = await self._async_fetch_current_user()
-        _LOGGER.debug(
-            "Login finished: %d installation(s) found", len(current_user.get("ET_INST", []))
-        )
-        return current_user
-
-    async def _async_get_session_data_key(self) -> str:
-        # Captura real do navegador: navegação simples de topo, sem Origin/Referer.
-        # Sem header Host explícito aqui: esse GET redireciona entre hosts
-        # diferentes (accounts.enel.com -> www.enel.com.br), e o aiohttp não
-        # atualiza um Host definido explicitamente ao longo dos redirects, só
-        # o que ele mesmo calcula automaticamente — um valor explícito ficaria
-        # desatualizado e quebraria o último salto.
-        async with self._session.get(SAMLSSO_URL, allow_redirects=True) as resp:
-            final_url = resp.url
-            session_data_key = final_url.query.get("sessionDataKey")
-            _LOGGER.debug(
-                "GET %s -> %s %s (final URL host=%s path=%s, sessionDataKey found=%s)",
-                SAMLSSO_URL, resp.status, resp.reason, final_url.host, final_url.path,
-                bool(session_data_key),
-            )
-            if not session_data_key:
-                body = await resp.text()
-                _LOGGER.debug(
-                    "No sessionDataKey in final redirect URL; response body follows:\n%s",
-                    body[:_DEBUG_SNIPPET_LEN],
-                )
-        if not session_data_key:
-            raise EnelSPAuthError("Could not obtain sessionDataKey from accounts.enel.com")
-        return session_data_key
-
-    async def _async_submit_credentials(self, session_data_key: str) -> str:
-        # Corpo do POST idêntico, campo a campo, ao do navegador real
-        # (capturado via HAR), incluindo o par "data" aparentemente redundante:
-        # o EnelCustomBasicAuthenticator do WSO2 pode depender de qualquer uma
-        # das duas representações.
-        payload = [
-            ("login_options", "Email"),
-            ("data", self._username),
-            ("data", self._password),
-            ("username", self._username),
-            ("password", self._password),
-            ("tocommonauth", "true"),
-            ("sessionDataKey", session_data_key),
-        ]
-        headers = {
-            "Host": _host_of(SAMLSSO_URL),
-            "Origin": WWW_ORIGIN,
-            "Referer": f"{WWW_ORIGIN}/",
-        }
-        async with self._session.post(SAMLSSO_URL, data=payload, headers=headers) as resp:
-            text = await resp.text()
-            _LOGGER.debug(
-                "POST %s -> %s %s (%d bytes)", SAMLSSO_URL, resp.status, resp.reason, len(text)
-            )
-
-        saml_response = _extract_saml_response(text)
-        if saml_response is None:
-            _LOGGER.debug(
-                "No SAMLResponse in the login result; response body follows "
-                "(look for an error/CAPTCHA message from Enel):\n%s",
-                text[:_DEBUG_SNIPPET_LEN],
-            )
-            raise EnelSPAuthError("Login failed: no SAMLResponse in the login result (check credentials)")
-        return html.unescape(saml_response)
-
-    async def _async_submit_saml_response(self, saml_response: str) -> None:
-        # Esse POST redireciona internamente (logininterceptor -> post-login.html),
-        # mas fica em www.enel.com.br o tempo todo, então um Host explícito é seguro.
-        headers = {
-            "Host": _host_of(ACS_URL),
-            "Origin": ACCOUNTS_ORIGIN,
-            "Referer": f"{ACCOUNTS_ORIGIN}/",
-        }
-        async with self._session.post(
-            ACS_URL, data={"SAMLResponse": saml_response}, headers=headers, allow_redirects=True
-        ) as resp:
-            body = await resp.read()
-            _LOGGER.debug(
-                "POST %s -> %s %s (final URL=%s, %d bytes)",
-                ACS_URL, resp.status, resp.reason, resp.url, len(body),
-            )
-
-    async def _async_fetch_current_user(self) -> dict[str, Any]:
-        headers = {
-            "sid": self._sid,
-            "Host": _host_of(CURRENTUSER_URL),
-            "Origin": WWW_ORIGIN,
-            "Referer": f"{WWW_ORIGIN}/pt-saopaulo/servico/post-login.html",
-        }
-        async with self._session.post(
-            CURRENTUSER_URL,
-            json={},
-            headers=headers,
-        ) as resp:
-            _LOGGER.debug("POST %s -> %s %s", CURRENTUSER_URL, resp.status, resp.reason)
-            if resp.status != 200:
-                body = await resp.text()
-                _LOGGER.debug("currentuser error body:\n%s", body[:_DEBUG_SNIPPET_LEN])
-                raise EnelSPAuthError(f"currentuser call failed with status {resp.status}")
-            payload = await resp.json(content_type=None)
-
-        current_user = payload.get("currentUser") or {}
-        self._jwt = current_user.get("access_token")
-        self._enel_id = current_user.get("enel_id")
-        if not self._jwt:
-            _LOGGER.debug(
-                "currentuser response had no access_token; top-level keys=%s, status=%s",
-                list(payload.keys()), payload.get("status"),
-            )
-            raise EnelSPAuthError("Login succeeded but no access_token was returned")
-
-        self._raw_current_user = current_user
-        return current_user
-
-    def get_installations(self) -> list[Installation]:
-        """Retorna as unidades consumidoras extraídas do último payload currentUser."""
-        installations = []
-        for inst in self._raw_current_user.get("ET_INST", []):
-            installations.append(
-                Installation(
-                    anlage=inst.get("ANLAGE", ""),
-                    vertrag=inst.get("VERTRAG", ""),
-                    vkont=inst.get("VKONT", ""),
-                    partner=inst.get("PARTNER", ""),
-                    address=inst.get("ENDERECO", ""),
-                    nickname=inst.get("APELIDO", ""),
-                    smart_meter=inst.get("SMARTMETER") == "X",
-                    serial=inst.get("SERIE", ""),
-                )
-            )
-        return installations
-
-    @property
-    def tariff_flag(self) -> str:
-        return self._raw_current_user.get("E_BANDEIRA", "")
+    O login/SAML (``async_login``, ``get_installations``, ``tariff_flag``) vem
+    de ``EnelSPAuthMixin`` (``auth.py``); esta classe só adiciona as chamadas
+    de API de negócio, feitas depois de logado.
+    """
 
     def _business_headers(self, url: str) -> dict[str, str]:
         if not self._jwt:
@@ -669,12 +455,40 @@ class EnelSPClient:
             },
         )
 
+    async def async_get_smartmeter_data(self, installation: Installation) -> dict[str, Any]:
+        """Projeção/meta do ciclo em andamento (só UCs com SMARTMETER=X).
+
+        Ao contrário de ``getAnaliseConsumo`` (cujo ``ATUAL_VALOR``/
+        ``ATUAL_CONSUMO`` na prática refletem a última fatura já emitida, não
+        o ciclo ainda em aberto), o campo ``ES_DADOS_CONSUMO.VALOR_PROJECAO``/
+        ``CONSUMO_PROJECAO`` dessa resposta é a projeção de verdade do ciclo
+        que ainda não fechou, com o mesmo período (``INICIO_PERIODO``/
+        ``FIM_PERIODO``) do ciclo que o medidor está lendo agora.
+        """
+        return await self._async_post_business(
+            SMARTMETER_DATA_URL,
+            "getSmartmeterData",
+            {
+                "I_CANAL": CANAL,
+                "I_COD_SERV": "AF",
+                "I_ANLAGE": installation.anlage,
+                "I_VERTRAG": installation.vertrag,
+                "I_VKONT": installation.vkont,
+                "I_PARTNER": installation.partner,
+            },
+        )
+
     async def async_get_bill_pdf(self, installation: Installation, bill: dict[str, Any]) -> bytes:
         """Baixa o PDF de uma fatura e devolve os bytes já decodificados.
 
         Ao contrário de todo o resto da API, a resposta desse endpoint não
         vem dentro de um envelope ``Body`` — os campos ficam soltos no nível
         raiz, então não dá pra reaproveitar ``_async_post_business`` aqui.
+
+        Esse endpoint falha esporadicamente com 500 do lado da Enel (não tem
+        relação com o payload — a mesma fatura pedida de novo logo em
+        seguida costuma funcionar), então tentamos mais uma vez antes de
+        desistir.
         """
         payload = self._envelope(
             "generatePdf",
@@ -693,15 +507,24 @@ class EnelSPClient:
                 "I_SSO_GUID": "",
             },
         )
-        async with self._session.post(
-            GENERATE_PDF_URL, json=payload, headers=self._business_headers(GENERATE_PDF_URL)
-        ) as resp:
-            _LOGGER.debug("POST %s (generatePdf) -> %s %s", GENERATE_PDF_URL, resp.status, resp.reason)
-            if resp.status != 200:
-                text = await resp.text()
-                _LOGGER.debug("generatePdf error body:\n%s", text[:_DEBUG_SNIPPET_LEN])
-                raise EnelSPApiError(f"generatePdf call failed with status {resp.status}")
-            data = await resp.json(content_type=None)
+        max_attempts = 2
+        for attempt in range(1, max_attempts + 1):
+            async with self._session.post(
+                GENERATE_PDF_URL, json=payload, headers=self._business_headers(GENERATE_PDF_URL)
+            ) as resp:
+                _LOGGER.debug(
+                    "POST %s (generatePdf) -> %s %s (tentativa %d/%d)",
+                    GENERATE_PDF_URL, resp.status, resp.reason, attempt, max_attempts,
+                )
+                if resp.status != 200:
+                    text = await resp.text()
+                    _LOGGER.debug("generatePdf error body:\n%s", text[:_DEBUG_SNIPPET_LEN])
+                    if resp.status >= 500 and attempt < max_attempts:
+                        await asyncio.sleep(2)
+                        continue
+                    raise EnelSPApiError(f"generatePdf call failed with status {resp.status}")
+                data = await resp.json(content_type=None)
+            break
 
         pdf_b64 = data.get("E_BIN_FAT")
         if not pdf_b64:
@@ -779,7 +602,10 @@ class EnelSPClient:
         )
 
         bill_list = bills.get("ET_CONTAS", [])
-        next_due = next((b for b in bill_list if b.get("SITUACAO") != "Paga"), None)
+        # A mais recente entre as em aberto, pelo VENCIMENTO — não a primeira
+        # do array na posição em que veio (a API não garante essa ordem,
+        # mesmo problema já corrigido pra `latest_bill` abaixo).
+        next_due = most_recent_bill([b for b in bill_list if b.get("SITUACAO") != "Paga"])
 
         reading_info: dict[str, Any] = {}
         latest_bill = most_recent_bill(bill_list)
@@ -805,12 +631,37 @@ class EnelSPClient:
                 previous_meter_reading = None
         reading_info["previous_meter_reading"] = previous_meter_reading
 
+        # getAnaliseConsumo.ATUAL_VALOR, na prática, é o valor da última
+        # fatura já emitida (mesmo valor de "Última fatura fechada"), não
+        # uma projeção do ciclo em aberto. getSmartmeterData.VALOR_PROJECAO/
+        # CONSUMO_PROJECAO é que trazem a projeção de verdade — melhor
+        # esforço: se falhar, cai de volta pro ATUAL_VALOR (sem estimativa
+        # de kWh nesse caso) em vez de derrubar a atualização inteira.
+        current_amount = current.get("ATUAL_VALOR")
+        current_estimated_consumption_kwh = None
+        if installation.smart_meter:
+            try:
+                smartmeter_data = await self.async_get_smartmeter_data(installation)
+                dados_consumo = smartmeter_data.get("ES_DADOS_CONSUMO", {})
+                valor_projecao = dados_consumo.get("VALOR_PROJECAO")
+                consumo_projecao = dados_consumo.get("CONSUMO_PROJECAO")
+                if valor_projecao is not None:
+                    current_amount = float(valor_projecao)
+                if consumo_projecao is not None:
+                    current_estimated_consumption_kwh = float(consumo_projecao)
+            except (EnelSPApiError, aiohttp.ClientError, TypeError, ValueError) as err:
+                _LOGGER.debug(
+                    "Could not fetch smart meter projection, falling back to ATUAL_VALOR: %s",
+                    err,
+                )
+
         return EnelSPData(
             installation=installation,
             tariff_flag=self.tariff_flag,
             current_period=current.get("PERIODO", ""),
             current_consumption_kwh=current.get("ATUAL_CONSUMO"),
-            current_amount=current.get("ATUAL_VALOR"),
+            current_amount=current_amount,
+            current_estimated_consumption_kwh=current_estimated_consumption_kwh,
             bills=bill_list,
             next_due_bill=next_due,
             history=history.get("ET_MEDIA_CONS", []),

@@ -1,5 +1,6 @@
-"""Bootstrap dos testes: carrega api.py/const.py sem importar o __init__.py
-do pacote, que puxa o Home Assistant (não é uma dependência dos testes aqui).
+"""Bootstrap dos testes: carrega api.py/auth.py/const.py sem importar o
+__init__.py do pacote, que puxa o Home Assistant (não é uma dependência dos
+testes aqui).
 """
 import importlib.util
 import sys
@@ -32,4 +33,5 @@ def _load(name: str, filename: str) -> types.ModuleType:
 _register_stub_package("custom_components", ROOT / "custom_components")
 _register_stub_package("custom_components.enel_sp", COMPONENT_DIR)
 _load("custom_components.enel_sp.const", "const.py")
+_load("custom_components.enel_sp.auth", "auth.py")
 _load("custom_components.enel_sp.api", "api.py")

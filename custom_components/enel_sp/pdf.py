@@ -11,15 +11,11 @@ VPN, etc.), vale ter isso em mente.
 """
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.network import NoURLAvailableError, get_url
 
 from .const import PDF_SUBDIR
-
-_LOGGER = logging.getLogger(__name__)
 
 
 def _pdf_path(hass: HomeAssistant, anlage: str) -> Path:
@@ -34,14 +30,14 @@ def _write_pdf(path: Path, content: bytes) -> None:
 
 
 async def async_save_bill_pdf(hass: HomeAssistant, anlage: str, content: bytes) -> str:
-    """Salva o PDF no disco e devolve a URL local pra acessá-lo."""
+    """Salva o PDF no disco e devolve o caminho relativo pra acessá-lo.
+
+    Sem host: o link é relativo (``/local/...``), resolvido pelo navegador em
+    cima da mesma origem de onde o HA está sendo acessado no momento — assim
+    funciona tanto local quanto por qualquer URL externa/proxy configurado,
+    sem depender de ``get_url()`` acertar qual delas usar.
+    """
     path = _pdf_path(hass, anlage)
     await hass.async_add_executor_job(_write_pdf, path, content)
 
-    try:
-        base_url = get_url(hass, prefer_external=False)
-    except NoURLAvailableError:
-        _LOGGER.debug("No HA base URL available yet; using a relative /local/ URL")
-        base_url = ""
-
-    return f"{base_url}/local/{PDF_SUBDIR}/{anlage}.pdf"
+    return f"/local/{PDF_SUBDIR}/{anlage}.pdf"

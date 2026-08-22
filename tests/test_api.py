@@ -58,6 +58,19 @@ class _FakeSession:
         return self._response
 
 
+class _FakeSequentialSession:
+    """Como `_FakeSession`, mas devolve uma resposta diferente por chamada
+    (na ordem dada) — usada pra testar retry."""
+
+    def __init__(self, responses: list[_FakeResponse]):
+        self._responses = list(responses)
+        self.calls: list[tuple[str, dict]] = []
+
+    def post(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        return self._responses[len(self.calls) - 1]
+
+
 @pytest.mark.asyncio
 async def test_submit_credentials_sends_exact_field_set_from_real_capture():
     """Teste de regressão: confere se o corpo do POST bate campo a campo com o
@@ -191,6 +204,59 @@ async def test_get_bill_pdf_raises_when_no_pdf_data():
 
     with pytest.raises(EnelSPApiError):
         await client.async_get_bill_pdf(installation, {"BELNR": "123"})
+
+
+@pytest.mark.asyncio
+async def test_get_bill_pdf_retries_once_on_server_error(monkeypatch):
+    """Regressão: generatePdf falha esporadicamente com 500 do lado da Enel
+    (sem relação com o payload) — uma segunda tentativa costuma resolver."""
+    import custom_components.enel_sp.api as api_module
+
+    monkeypatch.setattr(api_module.asyncio, "sleep", lambda *_a, **_kw: _noop())
+
+    fake_pdf_b64 = base64.b64encode(b"%PDF-1.4 fake content").decode()
+    session = _FakeSequentialSession([
+        _FakeResponse(status=500, reason="Internal Server Error", text="deu ruim"),
+        _FakeResponse(json_data={
+            "Header": {"IdPeticion": "x"}, "CodigoResultado": "", "E_MSG": "",
+            "E_BIN_FAT": fake_pdf_b64,
+        }),
+    ])
+    client = _client()
+    client._jwt = "fake-jwt"
+    client._session = session
+    installation = Installation(anlage="a", vertrag="v", vkont="k", partner="p")
+
+    pdf_bytes = await client.async_get_bill_pdf(installation, {"BELNR": "123"})
+
+    assert pdf_bytes == b"%PDF-1.4 fake content"
+    assert len(session.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_get_bill_pdf_gives_up_after_max_attempts(monkeypatch):
+    from custom_components.enel_sp.api import EnelSPApiError
+    import custom_components.enel_sp.api as api_module
+
+    monkeypatch.setattr(api_module.asyncio, "sleep", lambda *_a, **_kw: _noop())
+
+    session = _FakeSequentialSession([
+        _FakeResponse(status=500, reason="Internal Server Error", text="deu ruim"),
+        _FakeResponse(status=500, reason="Internal Server Error", text="deu ruim de novo"),
+    ])
+    client = _client()
+    client._jwt = "fake-jwt"
+    client._session = session
+    installation = Installation(anlage="a", vertrag="v", vkont="k", partner="p")
+
+    with pytest.raises(EnelSPApiError):
+        await client.async_get_bill_pdf(installation, {"BELNR": "123"})
+
+    assert len(session.calls) == 2
+
+
+async def _noop():
+    return None
 
 
 @pytest.mark.asyncio
@@ -334,18 +400,28 @@ async def test_async_get_all_data_aggregates_fixtures(monkeypatch):
         assert belnr == "000000000001"
         return _load("billanalisys")["Body"]
 
+    async def fake_smartmeter_data(inst: Installation):
+        return _load("getSmartmeterData")["Body"]
+
     monkeypatch.setattr(client, "async_get_consumption", fake_consumption)
     monkeypatch.setattr(client, "async_get_bills", fake_bills)
     monkeypatch.setattr(client, "async_get_history", fake_history)
     monkeypatch.setattr(client, "async_get_bill_analysis", fake_bill_analysis)
+    monkeypatch.setattr(client, "async_get_smartmeter_data", fake_smartmeter_data)
 
     data = await client.async_get_all_data(installation)
 
     assert data.installation is installation
     assert data.tariff_flag == "AMARELA"
     assert data.current_period == "Agosto/2026"
+    # "Consumo do período" continua vindo do getAnaliseConsumo (mesmo ciclo
+    # já fechado usado por current_meter_reading/previous_meter_reading).
     assert data.current_consumption_kwh == 168
-    assert data.current_amount == 153.44
+    # "Valor estimado atual" e "kWh estimado atual" já vêm da projeção de
+    # verdade (getSmartmeterData.ES_DADOS_CONSUMO), não mais do ATUAL_VALOR
+    # (que na prática é o valor da última fatura já fechada).
+    assert data.current_amount == 26.63
+    assert data.current_estimated_consumption_kwh == 30
     # A conta "Pendente" deve prevalecer sobre a que já está paga.
     assert data.next_due_bill["SITUACAO"] == "Pendente"
     assert data.next_due_bill["MONTANTE"] == 153.44
@@ -385,9 +461,13 @@ async def test_async_get_all_data_flags_supply_suspended(monkeypatch):
     async def fake_history(inst):
         return {"ET_MEDIA_CONS": []}
 
+    async def fake_smartmeter_data(inst):
+        return _load("getSmartmeterData")["Body"]
+
     monkeypatch.setattr(client, "async_get_consumption", fake_consumption)
     monkeypatch.setattr(client, "async_get_bills", fake_bills)
     monkeypatch.setattr(client, "async_get_history", fake_history)
+    monkeypatch.setattr(client, "async_get_smartmeter_data", fake_smartmeter_data)
 
     data = await client.async_get_all_data(installation)
 
@@ -423,10 +503,14 @@ async def test_async_get_all_data_previous_meter_reading_ignores_billanalysis_co
     async def fake_bill_analysis(inst, belnr):
         return billanalysis
 
+    async def fake_smartmeter_data(inst):
+        return _load("getSmartmeterData")["Body"]
+
     monkeypatch.setattr(client, "async_get_consumption", fake_consumption)
     monkeypatch.setattr(client, "async_get_bills", fake_bills)
     monkeypatch.setattr(client, "async_get_history", fake_history)
     monkeypatch.setattr(client, "async_get_bill_analysis", fake_bill_analysis)
+    monkeypatch.setattr(client, "async_get_smartmeter_data", fake_smartmeter_data)
 
     data = await client.async_get_all_data(installation)
 
@@ -467,14 +551,62 @@ async def test_async_get_all_data_picks_most_recent_bill_by_vencimento_not_array
         seen_belnr.append(belnr)
         return _load("billanalisys")["Body"]
 
+    async def fake_smartmeter_data(inst):
+        return _load("getSmartmeterData")["Body"]
+
     monkeypatch.setattr(client, "async_get_consumption", fake_consumption)
     monkeypatch.setattr(client, "async_get_bills", fake_bills)
     monkeypatch.setattr(client, "async_get_history", fake_history)
     monkeypatch.setattr(client, "async_get_bill_analysis", fake_bill_analysis)
+    monkeypatch.setattr(client, "async_get_smartmeter_data", fake_smartmeter_data)
 
     await client.async_get_all_data(installation)
 
     assert seen_belnr == ["NEW"]
+
+
+@pytest.mark.asyncio
+async def test_async_get_all_data_next_due_bill_picks_most_recent_pending(monkeypatch):
+    """Regressão: entre várias faturas em aberto fora de ordem no array,
+    "Última fatura fechada" precisa ser a de VENCIMENTO mais recente — não a
+    primeira do array que estiver com SITUACAO != "Paga"."""
+    client = _client()
+    client._jwt = "fake-jwt"
+    client._enel_id = "fake-enel-id"
+    client._raw_current_user = _load("currentuser")["currentUser"]
+    installation = client.get_installations()[0]
+
+    bills_out_of_order = {
+        "ET_CONTAS": [
+            {"BELNR": "NEWER", "VENCIMENTO": "20260910", "SITUACAO": "Pendente", "MONTANTE": 20},
+            {"BELNR": "OLDER", "VENCIMENTO": "20260810", "SITUACAO": "Pendente", "MONTANTE": 10},
+        ]
+    }
+
+    async def fake_consumption(inst):
+        return _load("getAnaliseConsumo")["Body"]
+
+    async def fake_bills(inst):
+        return bills_out_of_order
+
+    async def fake_history(inst):
+        return _load("portalhistoryinfo")["Body"]
+
+    async def fake_bill_analysis(inst, belnr):
+        return _load("billanalisys")["Body"]
+
+    async def fake_smartmeter_data(inst):
+        return _load("getSmartmeterData")["Body"]
+
+    monkeypatch.setattr(client, "async_get_consumption", fake_consumption)
+    monkeypatch.setattr(client, "async_get_bills", fake_bills)
+    monkeypatch.setattr(client, "async_get_history", fake_history)
+    monkeypatch.setattr(client, "async_get_bill_analysis", fake_bill_analysis)
+    monkeypatch.setattr(client, "async_get_smartmeter_data", fake_smartmeter_data)
+
+    data = await client.async_get_all_data(installation)
+
+    assert data.next_due_bill["BELNR"] == "NEWER"
 
 
 def test_build_consumption_statistics_drops_current_month_and_chains_hourly():
@@ -622,3 +754,32 @@ async def test_smart_meter_chart_data_request_shape():
     assert body["TimeScale"] == "D"
     assert body["T_REGISTERS"] == ["03", "04", "06", "08"]
     assert kwargs["json"]["Header"]["Funcionalidad"] == "SmartMeter"
+
+
+@pytest.mark.asyncio
+async def test_smartmeter_data_request_shape_and_parsing():
+    from custom_components.enel_sp.const import SMARTMETER_DATA_URL
+
+    client = _client()
+    client._jwt = "fake-jwt"
+    session = _FakeSession(_FakeResponse(json_data=_load("getSmartmeterData")))
+    client._session = session
+    installation = Installation(
+        anlage="0069999999", vertrag="0003999999", vkont="100099999999",
+        partner="0011111111", serial="FAKE000000000",
+    )
+
+    data = await client.async_get_smartmeter_data(installation)
+
+    url, kwargs = session.calls[0]
+    assert url == SMARTMETER_DATA_URL
+    body = kwargs["json"]["Body"]
+    assert body["I_ANLAGE"] == "0069999999"
+    assert body["I_VERTRAG"] == "0003999999"
+    assert body["I_VKONT"] == "100099999999"
+    assert body["I_PARTNER"] == "0011111111"
+    assert kwargs["json"]["Header"]["Funcionalidad"] == "getSmartmeterData"
+
+    dados = data["ES_DADOS_CONSUMO"]
+    assert dados["VALOR_PROJECAO"] == 26.63
+    assert dados["CONSUMO_PROJECAO"] == 30

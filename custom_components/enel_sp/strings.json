@@ -36,8 +36,8 @@
   },
   "entity": {
     "sensor": {
-      "valor_fatura_atual": {
-        "name": "Fatura atual"
+      "valor_ultima_fatura_fechada": {
+        "name": "Última fatura fechada"
       },
       "consumo_periodo_atual": {
         "name": "Consumo do período"
@@ -68,6 +68,9 @@
       },
       "valor_estimado_atual": {
         "name": "Valor estimado atual"
+      },
+      "consumo_estimado_atual": {
+        "name": "kWh estimado atual"
       },
       "mensagem_analise_fatura": {
         "name": "Mensagem de análise da fatura"
