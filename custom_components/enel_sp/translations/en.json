@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Enel São Paulo",
-        "description": "Enter the same credentials used at www.enel.com.br",
+        "description": "Enter the same credentials used at {enel_url}",
         "data": {
           "username": "Username (email or CPF)",
           "password": "Password"

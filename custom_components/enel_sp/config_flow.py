@@ -14,6 +14,10 @@ from .const import CONF_INSTALLATION, DEFAULT_HEADERS, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
+# Placeholder pro texto de ajuda do step "user" (strings.json/translations) —
+# hassfest não deixa URL/domínio literal na string traduzida.
+_USER_STEP_DESCRIPTION_PLACEHOLDERS = {"enel_url": "www.enel.com.br"}
+
 STEP_USER_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_USERNAME): str,
@@ -73,7 +77,10 @@ class EnelSPConfigFlow(ConfigFlow, domain=DOMAIN):
                     return await self.async_step_installation()
 
         return self.async_show_form(
-            step_id="user", data_schema=STEP_USER_SCHEMA, errors=errors
+            step_id="user",
+            data_schema=STEP_USER_SCHEMA,
+            errors=errors,
+            description_placeholders=_USER_STEP_DESCRIPTION_PLACEHOLDERS,
         )
 
     async def async_step_installation(

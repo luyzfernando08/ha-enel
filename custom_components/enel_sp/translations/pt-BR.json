@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Enel São Paulo",
-        "description": "Informe as mesmas credenciais usadas em www.enel.com.br",
+        "description": "Informe as mesmas credenciais usadas em {enel_url}",
         "data": {
           "username": "Usuário (e-mail ou CPF)",
           "password": "Senha"
