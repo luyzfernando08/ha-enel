@@ -203,6 +203,19 @@ ciclo.
    tiver mais de uma unidade consumidora, você escolhe qual adicionar (repita o
    fluxo para adicionar as demais).
 
+### Ícone da integração
+
+O ícone/logo que aparece em HACS e em Dispositivos e Serviços vem de
+`custom_components/enel_sp/brand/` (`icon.png`/`icon@2x.png`/`logo.png`/
+`logo@2x.png`, recortados e com fundo transparente a partir do logo oficial
+da Enel Brasil). Desde o Home Assistant 2026.3, esse é o jeito recomendado de
+fornecer ícone pra integração custom — o HA prioriza esses arquivos locais
+automaticamente, sem precisar de PR no repositório
+[home-assistant/brands](https://github.com/home-assistant/brands) (que hoje é
+só um fallback legado pra quem está em versões mais antigas). Uso de marca
+só pra identificação visual, sem vínculo com a Enel — mesmo aviso do início
+deste documento.
+
 ## Fluxo de login
 
 O site usa um **WSO2 Identity Server** (`accounts.enel.com`) para SSO via
