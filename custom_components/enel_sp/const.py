@@ -15,6 +15,10 @@ PORTALSP2_BASE = "https://exp-portalsp2-pro.de-c1.eu1.cloudhub.io/api"
 
 ANALISE_CONSUMO_URL = f"{PORTALWEB_BASE}/getAnaliseConsumo"
 PORTALINFO_URL = f"{PORTALSP_BASE}/portalinfo"
+# Ao contrário de portalinfo, devolve o campo QRCODE (Pix "copia e cola") em
+# ET_CONTAS. Mesmo formato de item que portalinfo, por isso substitui o
+# portalinfo como fonte das faturas.
+GETCLIENTBILLS_URL = f"{PORTALSP_BASE}/getClientBills"
 PORTALHISTORYINFO_URL = f"{PORTALSP_BASE}/portalhistoryinfo"
 # O caminho do endpoint está com erro de digitação ("billanalisys") no próprio
 # servidor da Enel; mantido igual ao original.

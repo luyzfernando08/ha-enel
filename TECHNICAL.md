@@ -70,11 +70,19 @@ criada; depois disso, renomear pela UI do HA é respeitado normalmente.
 Todas as chamadas usam o token (`enel-jwt-token`) e o `SID` obtidos no login.
 As três primeiras vêm de uma leva de chamadas feita a cada atualização; o
 `billanalysis` roda em seguida, sobre a fatura mais recente encontrada no
-`portalinfo`.
+`getClientBills`.
+
+**Faturas: `getClientBills`, não `portalinfo`.** O `portalinfo` também
+devolve `ET_CONTAS[]`, mas sem o campo `QRCODE` — por isso o Código Pix nunca
+vinha preenchido. O `getClientBills` devolve o mesmo formato de item (`BELNR`,
+`SITUACAO`, `VENCIMENTO`, `ANO_MES_REF`, `MONTANTE`, `O_COD_BARRAS`, etc.) só
+que com `QRCODE` populado, então substituiu o `portalinfo` como fonte de
+`ET_CONTAS[]` (parâmetro extra: `I_QTDE_FAT: "99"`, quantidade de faturas a
+retornar).
 
 | Sensor (chave) | Endpoint (`Funcionalidad`) | Campo(s) de origem |
 |---|---|---|
-| Última fatura fechada (`valor_ultima_fatura_fechada`) | `portalinfo` | `ET_CONTAS[]` com `SITUACAO != "Paga"` (a mais recente por `VENCIMENTO`) → `MONTANTE`. Atributos: `VENCIMENTO`, `SITUACAO`, `ANO_MES_REF`, `COD_BARRAS_NOVO`/`O_COD_BARRAS` |
+| Última fatura fechada (`valor_ultima_fatura_fechada`) | `getClientBills` | `ET_CONTAS[]` com `SITUACAO != "Paga"` (a mais recente por `VENCIMENTO`) → `MONTANTE`. Atributos: `VENCIMENTO`, `SITUACAO`, `ANO_MES_REF`, `COD_BARRAS_NOVO`/`O_COD_BARRAS` |
 | Consumo do período (`consumo_periodo_atual`) | `getAnaliseConsumo` | `ET_INSTALACAO[]` (item com `ANLAGE` da UC) → `ATUAL_CONSUMO`. Atributos: `PERIODO` (mesma resposta) e `historico` (de `portalhistoryinfo` → `ET_MEDIA_CONS`) |
 | Bandeira tarifária (`bandeira_tarifaria`) | `currentuser` | `E_BANDEIRA` |
 | Medidor inteligente (`medidor_inteligente`, `binary_sensor`) | `currentuser` | `ET_INST[].SMARTMETER == "X"`. Atributo `numero_serie`: `ET_INST[].SERIE` |
@@ -83,8 +91,8 @@ As três primeiras vêm de uma leva de chamadas feita a cada atualização; o
 | Valor do medidor atual (`valor_medidor_atual`) | `billanalysis` | `ET_MENU_RAPIDO[]` (item `ID == "LEITATUAL"`) → `VALOR2` |
 | Valor do medidor anterior (`valor_medidor_anterior`) | `billanalysis` + `getAnaliseConsumo` | **Calculado**, não vem pronto: `VALOR2 - ATUAL_CONSUMO`, arredondado. Usa o mesmo `ATUAL_CONSUMO` do sensor "Consumo do período" (não `E_CONS_TOTAL`/`E_CONSTANTE` do `billanalysis`, que se referem ao ciclo de faturamento da última fatura, não ao período atual) |
 | Link da fatura em PDF (`link_fatura_pdf`) | `generatepdf` | `E_BIN_FAT` (PDF em base64, decodificado e salvo em disco) — veja a seção abaixo |
-| Código Pix (`codigo_pix`) | `portalinfo` | Mesmo item de `ET_CONTAS[]` da última fatura fechada → campo `QRCODE`. Se passar de 255 caracteres (limite de estado do HA), o valor completo vai pro atributo `codigo_completo` |
-| Status da conta (`status_conta`) | `portalinfo` | Todo o `ET_CONTAS[]` (não só a mais recente) — `"Conta pendente"` se algum item tiver `SITUACAO != "Paga"` |
+| Código Pix (`codigo_pix`) | `getClientBills` | Mesmo item de `ET_CONTAS[]` da última fatura fechada → campo `QRCODE`. Se passar de 255 caracteres (limite de estado do HA), o valor completo vai pro atributo `codigo_completo` |
+| Status da conta (`status_conta`) | `getClientBills` | Todo o `ET_CONTAS[]` (não só a mais recente) — `"Conta pendente"` se algum item tiver `SITUACAO != "Paga"` |
 | Fornecimento normal (`fornecimento_normal`, `binary_sensor`) | `getAnaliseConsumo` | `ET_INSTALACAO[]` → `SUSPENSA != "X"` (invertido: `ligado` = normal). Atributo `mensagem`: `MSG_SUSPENSAO` |
 | Valor estimado atual (`valor_estimado_atual`) | `getSmartmeterData` (medidor inteligente) / `getAnaliseConsumo` (fallback) | `ES_DADOS_CONSUMO.VALOR_PROJECAO` — projeção de verdade do ciclo em aberto. Sem medidor inteligente, ou se essa chamada falhar, cai em `ET_INSTALACAO[].ATUAL_VALOR` (que na prática costuma refletir a última fatura já emitida, igual à "Última fatura fechada" — limitação da própria API nesse caso) |
 | kWh estimado atual (`consumo_estimado_atual`) | `getSmartmeterData` | `ES_DADOS_CONSUMO.CONSUMO_PROJECAO`. Só disponível em UCs com medidor inteligente — sem ele, o sensor fica vazio (sem fallback, ao contrário de "Valor estimado atual") |
@@ -97,11 +105,10 @@ A **fatura usada no `billanalysis` e no `generatepdf`** é sempre a de maior
 garante essa ordem).
 
 O campo `QRCODE` é o mesmo que o site oficial usa para renderizar o QR Code
-de pagamento (`chosenBill.QRCODE` no código-fonte deles) — não encontrei
-documentação de quando exatamente a Enel o preenche (aparenta depender do
-tipo/status da fatura), então se o sensor ficar vazio com uma fatura em
-aberto, pode ser que essa conta/UC específica não tenha Pix habilitado pelo
-lado da Enel.
+de pagamento (`chosenBill.QRCODE` no código-fonte deles). Confirmado numa
+captura real que ele vem preenchido tanto em faturas pendentes quanto pagas;
+se mesmo assim o sensor ficar vazio com uma fatura em aberto, pode ser que
+essa conta/UC específica não tenha Pix habilitado pelo lado da Enel.
 
 ## Link da fatura em PDF — aviso de segurança
 
@@ -224,7 +231,7 @@ sequenceDiagram
 
     Note over I,M: headers SID + enel-jwt-token em toda chamada seguinte
 
-    I->>M: POST getAnaliseConsumo / portalinfo / portalhistoryinfo /<br/>billanalysis / smartmetergetconsumptionchartdata
+    I->>M: POST getAnaliseConsumo / getClientBills / portalhistoryinfo /<br/>billanalysis / smartmetergetconsumptionchartdata
     M-->>I: fatura, consumo, leitura do medidor
 ```
 

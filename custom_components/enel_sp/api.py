@@ -30,8 +30,8 @@ from .const import (
     CANAL,
     COD_SISTEMA,
     GENERATE_PDF_URL,
+    GETCLIENTBILLS_URL,
     PORTALHISTORYINFO_URL,
-    PORTALINFO_URL,
     SMARTMETER_ACTIVE_ENERGY_REGISTER,
     SMARTMETER_CHART_URL,
     SMARTMETER_DATA_URL,
@@ -377,17 +377,12 @@ class EnelSPClient(EnelSPAuthMixin):
 
     async def async_get_bills(self, installation: Installation) -> dict[str, Any]:
         return await self._async_post_business(
-            PORTALINFO_URL,
-            "portalinfo",
+            GETCLIENTBILLS_URL,
+            "getClientBills",
             {
-                "I_CANAL": CANAL,
                 "I_COD_SERV": "TC",
-                "I_SERVICOS": "X",
-                "I_PREFERENCIA_FULL": "",
-                "I_ALERTAS_FULL": "",
-                "I_CONTAS": "X",
-                "I_ENELID": self._enel_id or "",
-                "I_ANLAGE": installation.anlage,
+                "I_QTDE_FAT": "99",
+                "I_CANAL": CANAL,
                 "I_VKONT": installation.vkont,
                 "I_VERTRAG": installation.vertrag,
                 "I_PARTNER": installation.partner,

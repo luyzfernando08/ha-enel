@@ -119,7 +119,7 @@ async def test_submit_credentials_sends_origin_host_referer_from_real_capture():
 
 @pytest.mark.asyncio
 async def test_business_call_sends_origin_host_referer_per_target_host():
-    from custom_components.enel_sp.const import PORTALINFO_URL, WWW_ORIGIN
+    from custom_components.enel_sp.const import WWW_ORIGIN
 
     client = _client()
     client._jwt = "fake-jwt"
@@ -391,7 +391,7 @@ async def test_async_get_all_data_aggregates_fixtures(monkeypatch):
         return _load("getAnaliseConsumo")["Body"]
 
     async def fake_bills(inst: Installation):
-        return _load("portalinfo")["Body"]
+        return _load("getClientBills")["Body"]
 
     async def fake_history(inst: Installation):
         return _load("portalhistoryinfo")["Body"]
@@ -425,6 +425,7 @@ async def test_async_get_all_data_aggregates_fixtures(monkeypatch):
     # A conta "Pendente" deve prevalecer sobre a que já está paga.
     assert data.next_due_bill["SITUACAO"] == "Pendente"
     assert data.next_due_bill["MONTANTE"] == 153.44
+    assert data.next_due_bill["QRCODE"].startswith("00020126580014BR.GOV.BCB.")
     assert len(data.bills) == 2
     assert len(data.history) == 2
     assert data.current_reading_date == date(2026, 8, 10)
@@ -495,7 +496,7 @@ async def test_async_get_all_data_previous_meter_reading_ignores_billanalysis_co
         return _load("getAnaliseConsumo")["Body"]
 
     async def fake_bills(inst):
-        return _load("portalinfo")["Body"]
+        return _load("getClientBills")["Body"]
 
     async def fake_history(inst):
         return _load("portalhistoryinfo")["Body"]
