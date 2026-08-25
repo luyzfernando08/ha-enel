@@ -10,7 +10,12 @@ from .api import EnelSPClient
 from .const import CONF_INSTALLATION, DEFAULT_HEADERS
 from .coordinator import EnelSPCoordinator
 
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.BUTTON]
+PLATFORMS: list[Platform] = [
+    Platform.SENSOR,
+    Platform.BINARY_SENSOR,
+    Platform.BUTTON,
+    Platform.IMAGE,
+]
 
 EnelSPConfigEntry = ConfigEntry[EnelSPCoordinator]
 

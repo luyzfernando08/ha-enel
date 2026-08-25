@@ -11,7 +11,6 @@ CURRENTUSER_URL = "https://www.enel.com.br/bin/enel-br/pt-saopaulo/currentuser"
 
 PORTALWEB_BASE = "https://exp-portalweb-pro.de-c1.eu1.cloudhub.io/api"
 PORTALSP_BASE = "https://exp-portalsp-pro.de-c1.eu1.cloudhub.io/api"
-PORTALSP2_BASE = "https://exp-portalsp2-pro.de-c1.eu1.cloudhub.io/api"
 
 ANALISE_CONSUMO_URL = f"{PORTALWEB_BASE}/getAnaliseConsumo"
 PORTALINFO_URL = f"{PORTALSP_BASE}/portalinfo"
@@ -24,10 +23,6 @@ PORTALHISTORYINFO_URL = f"{PORTALSP_BASE}/portalhistoryinfo"
 # servidor da Enel; mantido igual ao original.
 BILLANALYSIS_URL = f"{PORTALSP_BASE}/billanalisys"
 SMARTMETER_CHART_URL = f"{PORTALWEB_BASE}/smartmetergetconsumptionchartdata"
-# Projeção/meta do ciclo em andamento (só UCs com medidor inteligente) — ao
-# contrário de getAnaliseConsumo, cujo "ATUAL_VALOR"/"ATUAL_CONSUMO" na
-# prática refletem a última fatura já emitida, não o ciclo em aberto.
-SMARTMETER_DATA_URL = f"{PORTALSP2_BASE}/getSmartmeterData"
 GENERATE_PDF_URL = f"{PORTALSP_BASE}/generatepdf"
 
 # Subpasta de config/www/ onde o PDF da fatura é salvo (servida pelo HA em

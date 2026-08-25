@@ -66,12 +66,6 @@
       "status_conta": {
         "name": "Account status"
       },
-      "valor_estimado_atual": {
-        "name": "Current estimated amount"
-      },
-      "consumo_estimado_atual": {
-        "name": "Current estimated kWh"
-      },
       "mensagem_analise_fatura": {
         "name": "Bill analysis message"
       },
@@ -93,6 +87,11 @@
     "button": {
       "atualizar_dados": {
         "name": "Refresh data"
+      }
+    },
+    "image": {
+      "qrcode_pix": {
+        "name": "Pix QR code"
       }
     }
   }

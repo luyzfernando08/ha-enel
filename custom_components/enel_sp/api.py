@@ -34,7 +34,6 @@ from .const import (
     PORTALHISTORYINFO_URL,
     SMARTMETER_ACTIVE_ENERGY_REGISTER,
     SMARTMETER_CHART_URL,
-    SMARTMETER_DATA_URL,
     WWW_ORIGIN,
 )
 
@@ -282,10 +281,6 @@ class EnelSPData:
     tariff_flag: str = ""
     current_period: str = ""
     current_consumption_kwh: float | None = None
-    current_amount: float | None = None
-    # Projeção do ciclo em aberto (getSmartmeterData), diferente de
-    # current_consumption_kwh (consumo do último ciclo já fechado).
-    current_estimated_consumption_kwh: float | None = None
     bills: list[dict[str, Any]] = field(default_factory=list)
     next_due_bill: dict[str, Any] | None = None
     history: list[dict[str, Any]] = field(default_factory=list)
@@ -450,29 +445,6 @@ class EnelSPClient(EnelSPAuthMixin):
             },
         )
 
-    async def async_get_smartmeter_data(self, installation: Installation) -> dict[str, Any]:
-        """Projeção/meta do ciclo em andamento (só UCs com SMARTMETER=X).
-
-        Ao contrário de ``getAnaliseConsumo`` (cujo ``ATUAL_VALOR``/
-        ``ATUAL_CONSUMO`` na prática refletem a última fatura já emitida, não
-        o ciclo ainda em aberto), o campo ``ES_DADOS_CONSUMO.VALOR_PROJECAO``/
-        ``CONSUMO_PROJECAO`` dessa resposta é a projeção de verdade do ciclo
-        que ainda não fechou, com o mesmo período (``INICIO_PERIODO``/
-        ``FIM_PERIODO``) do ciclo que o medidor está lendo agora.
-        """
-        return await self._async_post_business(
-            SMARTMETER_DATA_URL,
-            "getSmartmeterData",
-            {
-                "I_CANAL": CANAL,
-                "I_COD_SERV": "AF",
-                "I_ANLAGE": installation.anlage,
-                "I_VERTRAG": installation.vertrag,
-                "I_VKONT": installation.vkont,
-                "I_PARTNER": installation.partner,
-            },
-        )
-
     async def async_get_bill_pdf(self, installation: Installation, bill: dict[str, Any]) -> bytes:
         """Baixa o PDF de uma fatura e devolve os bytes já decodificados.
 
@@ -626,37 +598,11 @@ class EnelSPClient(EnelSPAuthMixin):
                 previous_meter_reading = None
         reading_info["previous_meter_reading"] = previous_meter_reading
 
-        # getAnaliseConsumo.ATUAL_VALOR, na prática, é o valor da última
-        # fatura já emitida (mesmo valor de "Última fatura fechada"), não
-        # uma projeção do ciclo em aberto. getSmartmeterData.VALOR_PROJECAO/
-        # CONSUMO_PROJECAO é que trazem a projeção de verdade — melhor
-        # esforço: se falhar, cai de volta pro ATUAL_VALOR (sem estimativa
-        # de kWh nesse caso) em vez de derrubar a atualização inteira.
-        current_amount = current.get("ATUAL_VALOR")
-        current_estimated_consumption_kwh = None
-        if installation.smart_meter:
-            try:
-                smartmeter_data = await self.async_get_smartmeter_data(installation)
-                dados_consumo = smartmeter_data.get("ES_DADOS_CONSUMO", {})
-                valor_projecao = dados_consumo.get("VALOR_PROJECAO")
-                consumo_projecao = dados_consumo.get("CONSUMO_PROJECAO")
-                if valor_projecao is not None:
-                    current_amount = float(valor_projecao)
-                if consumo_projecao is not None:
-                    current_estimated_consumption_kwh = float(consumo_projecao)
-            except (EnelSPApiError, aiohttp.ClientError, TypeError, ValueError) as err:
-                _LOGGER.debug(
-                    "Could not fetch smart meter projection, falling back to ATUAL_VALOR: %s",
-                    err,
-                )
-
         return EnelSPData(
             installation=installation,
             tariff_flag=self.tariff_flag,
             current_period=current.get("PERIODO", ""),
             current_consumption_kwh=current.get("ATUAL_CONSUMO"),
-            current_amount=current_amount,
-            current_estimated_consumption_kwh=current_estimated_consumption_kwh,
             bills=bill_list,
             next_due_bill=next_due,
             history=history.get("ET_MEDIA_CONS", []),

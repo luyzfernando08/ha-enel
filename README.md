@@ -21,9 +21,8 @@ Para cada unidade consumidora cadastrada:
 - **Bandeira tarifária** vigente (verde / amarela / vermelha 1 / vermelha 2)
 - **Status da conta** (em dia ou com fatura pendente)
 - Se o **fornecimento** está normal ou cortado por falta de pagamento
-- **Valor e consumo estimados** do ciclo em andamento (em UCs com medidor
-  inteligente), antes mesmo da fatura fechar
-- **Código Pix** da fatura em aberto, quando disponível
+- **Código Pix** (texto e QR Code) da fatura em aberto, quando disponível —
+  some quando não há conta pendente
 - Link para abrir a **fatura em PDF** (veja o aviso de segurança abaixo)
 - Consumo e gasto médios diários
 - Datas de leitura do medidor (atual e próxima)

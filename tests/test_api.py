@@ -400,14 +400,10 @@ async def test_async_get_all_data_aggregates_fixtures(monkeypatch):
         assert belnr == "000000000001"
         return _load("billanalisys")["Body"]
 
-    async def fake_smartmeter_data(inst: Installation):
-        return _load("getSmartmeterData")["Body"]
-
     monkeypatch.setattr(client, "async_get_consumption", fake_consumption)
     monkeypatch.setattr(client, "async_get_bills", fake_bills)
     monkeypatch.setattr(client, "async_get_history", fake_history)
     monkeypatch.setattr(client, "async_get_bill_analysis", fake_bill_analysis)
-    monkeypatch.setattr(client, "async_get_smartmeter_data", fake_smartmeter_data)
 
     data = await client.async_get_all_data(installation)
 
@@ -417,11 +413,6 @@ async def test_async_get_all_data_aggregates_fixtures(monkeypatch):
     # "Consumo do período" continua vindo do getAnaliseConsumo (mesmo ciclo
     # já fechado usado por current_meter_reading/previous_meter_reading).
     assert data.current_consumption_kwh == 168
-    # "Valor estimado atual" e "kWh estimado atual" já vêm da projeção de
-    # verdade (getSmartmeterData.ES_DADOS_CONSUMO), não mais do ATUAL_VALOR
-    # (que na prática é o valor da última fatura já fechada).
-    assert data.current_amount == 26.63
-    assert data.current_estimated_consumption_kwh == 30
     # A conta "Pendente" deve prevalecer sobre a que já está paga.
     assert data.next_due_bill["SITUACAO"] == "Pendente"
     assert data.next_due_bill["MONTANTE"] == 153.44
@@ -439,6 +430,51 @@ async def test_async_get_all_data_aggregates_fixtures(monkeypatch):
     assert data.bill_analysis_message.startswith("Você gastou R$ 10,55 a menos")
     assert data.daily_consumption_kwh == 5.42
     assert data.daily_amount == 4.95
+
+
+@pytest.mark.asyncio
+async def test_async_get_all_data_no_pix_when_no_pending_bill(monkeypatch):
+    """Regressão: sem conta em aberto, next_due_bill (fonte do sensor/imagem
+    de Pix) precisa ficar None mesmo que uma fatura já paga tenha QRCODE
+    preenchido (a Enel manda QRCODE em contas pagas também)."""
+    client = _client()
+    client._jwt = "fake-jwt"
+    client._enel_id = "fake-enel-id"
+    client._raw_current_user = _load("currentuser")["currentUser"]
+    installation = client.get_installations()[0]
+
+    all_paid = {
+        "ET_CONTAS": [
+            {
+                "BELNR": "PAID",
+                "SITUACAO": "Paga",
+                "VENCIMENTO": "20260810",
+                "MONTANTE": 163.99,
+                "QRCODE": "00020126580014BR.GOV.BCB.PAIDCODE",
+            }
+        ]
+    }
+
+    async def fake_consumption(inst):
+        return _load("getAnaliseConsumo")["Body"]
+
+    async def fake_bills(inst):
+        return all_paid
+
+    async def fake_history(inst):
+        return {"ET_MEDIA_CONS": []}
+
+    async def fake_bill_analysis(inst, belnr):
+        return _load("billanalisys")["Body"]
+
+    monkeypatch.setattr(client, "async_get_consumption", fake_consumption)
+    monkeypatch.setattr(client, "async_get_bills", fake_bills)
+    monkeypatch.setattr(client, "async_get_history", fake_history)
+    monkeypatch.setattr(client, "async_get_bill_analysis", fake_bill_analysis)
+
+    data = await client.async_get_all_data(installation)
+
+    assert data.next_due_bill is None
 
 
 @pytest.mark.asyncio
@@ -462,13 +498,9 @@ async def test_async_get_all_data_flags_supply_suspended(monkeypatch):
     async def fake_history(inst):
         return {"ET_MEDIA_CONS": []}
 
-    async def fake_smartmeter_data(inst):
-        return _load("getSmartmeterData")["Body"]
-
     monkeypatch.setattr(client, "async_get_consumption", fake_consumption)
     monkeypatch.setattr(client, "async_get_bills", fake_bills)
     monkeypatch.setattr(client, "async_get_history", fake_history)
-    monkeypatch.setattr(client, "async_get_smartmeter_data", fake_smartmeter_data)
 
     data = await client.async_get_all_data(installation)
 
@@ -504,14 +536,10 @@ async def test_async_get_all_data_previous_meter_reading_ignores_billanalysis_co
     async def fake_bill_analysis(inst, belnr):
         return billanalysis
 
-    async def fake_smartmeter_data(inst):
-        return _load("getSmartmeterData")["Body"]
-
     monkeypatch.setattr(client, "async_get_consumption", fake_consumption)
     monkeypatch.setattr(client, "async_get_bills", fake_bills)
     monkeypatch.setattr(client, "async_get_history", fake_history)
     monkeypatch.setattr(client, "async_get_bill_analysis", fake_bill_analysis)
-    monkeypatch.setattr(client, "async_get_smartmeter_data", fake_smartmeter_data)
 
     data = await client.async_get_all_data(installation)
 
@@ -552,14 +580,10 @@ async def test_async_get_all_data_picks_most_recent_bill_by_vencimento_not_array
         seen_belnr.append(belnr)
         return _load("billanalisys")["Body"]
 
-    async def fake_smartmeter_data(inst):
-        return _load("getSmartmeterData")["Body"]
-
     monkeypatch.setattr(client, "async_get_consumption", fake_consumption)
     monkeypatch.setattr(client, "async_get_bills", fake_bills)
     monkeypatch.setattr(client, "async_get_history", fake_history)
     monkeypatch.setattr(client, "async_get_bill_analysis", fake_bill_analysis)
-    monkeypatch.setattr(client, "async_get_smartmeter_data", fake_smartmeter_data)
 
     await client.async_get_all_data(installation)
 
@@ -596,14 +620,10 @@ async def test_async_get_all_data_next_due_bill_picks_most_recent_pending(monkey
     async def fake_bill_analysis(inst, belnr):
         return _load("billanalisys")["Body"]
 
-    async def fake_smartmeter_data(inst):
-        return _load("getSmartmeterData")["Body"]
-
     monkeypatch.setattr(client, "async_get_consumption", fake_consumption)
     monkeypatch.setattr(client, "async_get_bills", fake_bills)
     monkeypatch.setattr(client, "async_get_history", fake_history)
     monkeypatch.setattr(client, "async_get_bill_analysis", fake_bill_analysis)
-    monkeypatch.setattr(client, "async_get_smartmeter_data", fake_smartmeter_data)
 
     data = await client.async_get_all_data(installation)
 
@@ -755,32 +775,3 @@ async def test_smart_meter_chart_data_request_shape():
     assert body["TimeScale"] == "D"
     assert body["T_REGISTERS"] == ["03", "04", "06", "08"]
     assert kwargs["json"]["Header"]["Funcionalidad"] == "SmartMeter"
-
-
-@pytest.mark.asyncio
-async def test_smartmeter_data_request_shape_and_parsing():
-    from custom_components.enel_sp.const import SMARTMETER_DATA_URL
-
-    client = _client()
-    client._jwt = "fake-jwt"
-    session = _FakeSession(_FakeResponse(json_data=_load("getSmartmeterData")))
-    client._session = session
-    installation = Installation(
-        anlage="0069999999", vertrag="0003999999", vkont="100099999999",
-        partner="0011111111", serial="FAKE000000000",
-    )
-
-    data = await client.async_get_smartmeter_data(installation)
-
-    url, kwargs = session.calls[0]
-    assert url == SMARTMETER_DATA_URL
-    body = kwargs["json"]["Body"]
-    assert body["I_ANLAGE"] == "0069999999"
-    assert body["I_VERTRAG"] == "0003999999"
-    assert body["I_VKONT"] == "100099999999"
-    assert body["I_PARTNER"] == "0011111111"
-    assert kwargs["json"]["Header"]["Funcionalidad"] == "getSmartmeterData"
-
-    dados = data["ES_DADOS_CONSUMO"]
-    assert dados["VALOR_PROJECAO"] == 26.63
-    assert dados["CONSUMO_PROJECAO"] == 30
