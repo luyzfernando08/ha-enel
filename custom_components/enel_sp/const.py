@@ -56,7 +56,7 @@ DEFAULT_HEADERS = {
 
 CONF_INSTALLATION = "installation"
 
-DEFAULT_UPDATE_INTERVAL = timedelta(hours=6)
+DEFAULT_UPDATE_INTERVAL = timedelta(hours=24)
 
 ATTR_DUE_DATE = "vencimento"
 ATTR_BARCODE = "codigo_barras"
