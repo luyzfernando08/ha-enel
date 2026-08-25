@@ -278,7 +278,7 @@ class EnelSPAccountStatusSensor(EnelSPEntity):
 
     @property
     def native_value(self) -> str:
-        return "Conta pendente" if self._pending_bills else "Nenhuma conta em aberto"
+        return "Em aberto" if self._pending_bills else "Paga"
 
     @property
     def extra_state_attributes(self) -> dict:

@@ -33,9 +33,9 @@ reversa de uma API não documentada, que pode mudar sem aviso.
   como QR Code (gerado localmente pela integração com a lib `qrcode`, a
   Enel não manda uma imagem pronta). Fica indisponível pelo mesmo motivo que
   o sensor de texto some: sem fatura pendente, não há o que mostrar.
-- **Status da conta** (`sensor`) — `Conta pendente` se **qualquer** fatura
-  consultada estiver em aberto (não só a mais recente), senão `Nenhuma conta
-  em aberto`. Atributos: `quantidade_pendentes`, `valor_total_pendente`,
+- **Status da conta** (`sensor`) — `Em aberto` se **qualquer** fatura
+  consultada estiver pendente (não só a mais recente), senão `Paga`.
+  Atributos: `quantidade_pendentes`, `valor_total_pendente`,
   `meses_pendentes`.
 - **Fornecimento normal** (`binary_sensor`, diagnóstico) — `ligado` quando o
   fornecimento está normal, `desligado` quando há corte por falta de
@@ -91,7 +91,7 @@ retornar).
 | Link da fatura em PDF (`link_fatura_pdf`) | `generatepdf` | `E_BIN_FAT` (PDF em base64, decodificado e salvo em disco) — veja a seção abaixo |
 | Código Pix (`codigo_pix`) | `getClientBills` | Mesmo item de `ET_CONTAS[]` da última fatura fechada → campo `QRCODE`. `None` se `next_due_bill` for `None` (nenhuma fatura com `SITUACAO != "Paga"`) — não basta o campo `QRCODE` existir na fatura, ela também precisa estar pendente (a Enel manda `QRCODE` até em faturas já pagas). Se passar de 255 caracteres (limite de estado do HA), o valor completo vai pro atributo `codigo_completo` |
 | QR Code Pix (`qrcode_pix`, `image`) | — | Não chama a API: gera a imagem localmente (lib `qrcode`) a partir do mesmo texto do sensor "Código Pix" acima. Mesmo gate: sem `next_due_bill`, a entidade fica `unavailable` |
-| Status da conta (`status_conta`) | `getClientBills` | Todo o `ET_CONTAS[]` (não só a mais recente) — `"Conta pendente"` se algum item tiver `SITUACAO != "Paga"` |
+| Status da conta (`status_conta`) | `getClientBills` | Todo o `ET_CONTAS[]` (não só a mais recente) — `"Em aberto"` se algum item tiver `SITUACAO != "Paga"`, senão `"Paga"` |
 | Fornecimento normal (`fornecimento_normal`, `binary_sensor`) | `getAnaliseConsumo` | `ET_INSTALACAO[]` → `SUSPENSA != "X"` (invertido: `ligado` = normal). Atributo `mensagem`: `MSG_SUSPENSAO` |
 | Mensagem de análise da fatura (`mensagem_analise_fatura`) | `billanalysis` | `E_MSG`/`DescripcionResultado` |
 | Consumo médio diário (`consumo_medio_diario`) | `billanalysis` | `E_CONS_DIA` |
