@@ -37,6 +37,10 @@ reversa de uma API não documentada, que pode mudar sem aviso.
   consultada estiver pendente (não só a mais recente), senão `Paga`.
   Atributos: `quantidade_pendentes`, `valor_total_pendente`,
   `meses_pendentes`.
+- **Total de contas em aberto** (`sensor`) — quantidade de faturas pendentes
+  entre todas as consultadas; mesmo critério e mesmo número do atributo
+  `quantidade_pendentes` acima, como sensor próprio (útil pra automações
+  sem precisar ler um atributo).
 - **Fornecimento normal** (`binary_sensor`, diagnóstico) — `ligado` quando o
   fornecimento está normal, `desligado` quando há corte por falta de
   pagamento. Atributo `mensagem` quando disponível.
@@ -92,6 +96,7 @@ retornar).
 | Código Pix (`codigo_pix`) | `getClientBills` | Mesmo item de `ET_CONTAS[]` da última fatura fechada → campo `QRCODE`. `None` se `next_due_bill` for `None` (nenhuma fatura com `SITUACAO != "Paga"`) — não basta o campo `QRCODE` existir na fatura, ela também precisa estar pendente (a Enel manda `QRCODE` até em faturas já pagas). Se passar de 255 caracteres (limite de estado do HA), o valor completo vai pro atributo `codigo_completo` |
 | QR Code Pix (`qrcode_pix`, `image`) | — | Não chama a API: gera a imagem localmente (lib `qrcode`) a partir do mesmo texto do sensor "Código Pix" acima. Mesmo gate: sem `next_due_bill`, a entidade fica `unavailable` |
 | Status da conta (`status_conta`) | `getClientBills` | Todo o `ET_CONTAS[]` (não só a mais recente) — `"Em aberto"` se algum item tiver `SITUACAO != "Paga"`, senão `"Paga"` |
+| Total de contas em aberto (`total_contas_abertas`) | `getClientBills` | Mesmo filtro do "Status da conta" (`ET_CONTAS[]` com `SITUACAO != "Paga"`) → `len(...)` |
 | Fornecimento normal (`fornecimento_normal`, `binary_sensor`) | `getAnaliseConsumo` | `ET_INSTALACAO[]` → `SUSPENSA != "X"` (invertido: `ligado` = normal). Atributo `mensagem`: `MSG_SUSPENSAO` |
 | Mensagem de análise da fatura (`mensagem_analise_fatura`) | `billanalysis` | `E_MSG`/`DescripcionResultado` |
 | Consumo médio diário (`consumo_medio_diario`) | `billanalysis` | `E_CONS_DIA` |

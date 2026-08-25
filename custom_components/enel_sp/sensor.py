@@ -15,6 +15,13 @@ from homeassistant.util import dt as dt_util
 from . import EnelSPConfigEntry
 from .entity import EnelSPBaseEntity
 
+
+def _pending_bills(bills: list[dict]) -> list[dict]:
+    """Faturas ainda não pagas — critério único, compartilhado por todo
+    sensor que precisa saber se há conta em aberto."""
+    return [b for b in bills if b.get("SITUACAO") != "Paga"]
+
+
 BILL_DESCRIPTION = SensorEntityDescription(
     key="valor_ultima_fatura_fechada",
     translation_key="valor_ultima_fatura_fechada",
@@ -93,6 +100,13 @@ ACCOUNT_STATUS_DESCRIPTION = SensorEntityDescription(
     icon="mdi:file-document-alert-outline",
 )
 
+PENDING_BILLS_COUNT_DESCRIPTION = SensorEntityDescription(
+    key="total_contas_abertas",
+    translation_key="total_contas_abertas",
+    icon="mdi:file-document-multiple-outline",
+    state_class=SensorStateClass.MEASUREMENT,
+)
+
 BILL_ANALYSIS_MESSAGE_DESCRIPTION = SensorEntityDescription(
     key="mensagem_analise_fatura",
     translation_key="mensagem_analise_fatura",
@@ -136,6 +150,7 @@ async def async_setup_entry(
             EnelSPBillPdfUrlSensor(coordinator, BILL_PDF_URL_DESCRIPTION),
             EnelSPPixCodeSensor(coordinator, PIX_CODE_DESCRIPTION),
             EnelSPAccountStatusSensor(coordinator, ACCOUNT_STATUS_DESCRIPTION),
+            EnelSPPendingBillsCountSensor(coordinator, PENDING_BILLS_COUNT_DESCRIPTION),
             EnelSPBillAnalysisMessageSensor(coordinator, BILL_ANALYSIS_MESSAGE_DESCRIPTION),
             EnelSPDailyConsumptionSensor(coordinator, DAILY_CONSUMPTION_DESCRIPTION),
             EnelSPDailyAmountSensor(coordinator, DAILY_AMOUNT_DESCRIPTION),
@@ -273,21 +288,28 @@ class EnelSPAccountStatusSensor(EnelSPEntity):
     """Se há alguma conta em aberto entre todas as consultadas (não só a mais recente)."""
 
     @property
-    def _pending_bills(self) -> list[dict]:
-        return [b for b in self._data.bills if b.get("SITUACAO") != "Paga"]
-
-    @property
     def native_value(self) -> str:
-        return "Em aberto" if self._pending_bills else "Paga"
+        return "Em aberto" if _pending_bills(self._data.bills) else "Paga"
 
     @property
     def extra_state_attributes(self) -> dict:
-        pending = self._pending_bills
+        pending = _pending_bills(self._data.bills)
         return {
             "quantidade_pendentes": len(pending),
             "valor_total_pendente": round(sum(b.get("MONTANTE") or 0 for b in pending), 2),
             "meses_pendentes": [b.get("ANO_MES_REF") for b in pending],
         }
+
+
+class EnelSPPendingBillsCountSensor(EnelSPEntity):
+    """Quantidade de faturas em aberto entre todas as consultadas (não só a
+    mais recente) — mesmo critério e mesma contagem do atributo
+    `quantidade_pendentes` do sensor "Status da conta", como sensor próprio.
+    """
+
+    @property
+    def native_value(self) -> int:
+        return len(_pending_bills(self._data.bills))
 
 
 class EnelSPBillAnalysisMessageSensor(EnelSPEntity):

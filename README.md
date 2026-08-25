@@ -19,7 +19,7 @@ Para cada unidade consumidora cadastrada:
 - Valor e vencimento da **última fatura**
 - **Consumo** de energia do período atual (kWh)
 - **Bandeira tarifária** vigente (verde / amarela / vermelha 1 / vermelha 2)
-- **Status da conta** (em dia ou com fatura pendente)
+- **Status da conta** (em dia ou com fatura pendente) e o **total de contas em aberto**
 - Se o **fornecimento** está normal ou cortado por falta de pagamento
 - **Código Pix** (texto e QR Code) da fatura em aberto, quando disponível —
   some quando não há conta pendente

@@ -66,6 +66,9 @@
       "status_conta": {
         "name": "Status da conta"
       },
+      "total_contas_abertas": {
+        "name": "Total de contas em aberto"
+      },
       "mensagem_analise_fatura": {
         "name": "Mensagem de análise da fatura"
       },
