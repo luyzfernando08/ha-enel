@@ -35,3 +35,8 @@ _register_stub_package("custom_components.enel_sp", COMPONENT_DIR)
 _load("custom_components.enel_sp.const", "const.py")
 _load("custom_components.enel_sp.auth", "auth.py")
 _load("custom_components.enel_sp.api", "api.py")
+# addon_client.py só usa `homeassistant` dentro dos corpos das funções que
+# de fato precisam de `hass` (imports locais) — o módulo em si carrega sem
+# o pacote `homeassistant` instalado, então dá pra testar suas funções puras
+# (ex.: cookies_to_simplecookie) aqui do mesmo jeito que auth.py/api.py.
+_load("custom_components.enel_sp.addon_client", "addon_client.py")

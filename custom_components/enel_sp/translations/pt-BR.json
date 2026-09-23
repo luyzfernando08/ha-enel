@@ -27,11 +27,24 @@
     "error": {
       "invalid_auth": "Usuário ou senha inválidos",
       "cannot_connect": "Não foi possível conectar ao site da Enel",
-      "no_installations": "Nenhuma unidade consumidora encontrada nessa conta"
+      "no_installations": "Nenhuma unidade consumidora encontrada nessa conta",
+      "waf_blocked": "O portal da Enel bloqueou a tentativa de login (proteção anti-bot). Não é um problema de usuário/senha — tente novamente mais tarde",
+      "addon_unavailable": "Não foi possível falar com o add-on \"Enel SP Auth\". Confirme que ele está instalado e iniciado"
     },
     "abort": {
       "already_configured": "Essa unidade consumidora já está configurada",
-      "reauth_successful": "Reautenticado com sucesso"
+      "reauth_successful": "Reautenticado com sucesso",
+      "not_hassio": "Esta integração exige o add-on \"Enel SP Auth\", disponível só em instâncias Home Assistant OS/Supervised"
+    }
+  },
+  "issues": {
+    "waf_blocked": {
+      "title": "Login bloqueado pelo WAF da Enel",
+      "description": "O add-on \"Enel SP Auth\" não conseguiu concluir o login — o portal da Enel está bloqueando o acesso automatizado. Isso não é um problema de usuário/senha; a integração vai continuar tentando automaticamente nos próximos ciclos."
+    },
+    "addon_unavailable": {
+      "title": "Add-on \"Enel SP Auth\" indisponível",
+      "description": "Instale e inicie o add-on \"Enel SP Auth\" pela loja de add-ons do Supervisor para que a integração consiga fazer login."
     }
   },
   "entity": {
@@ -50,6 +63,9 @@
       },
       "data_leitura_atual": {
         "name": "Data da leitura atual"
+      },
+      "data_proxima_atualizacao": {
+        "name": "Próxima atualização"
       },
       "valor_medidor_anterior": {
         "name": "Valor do medidor anterior"

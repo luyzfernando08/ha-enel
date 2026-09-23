@@ -2,31 +2,33 @@
 
 Reproduz o fluxo de login do navegador em https://www.enel.com.br/pt-saopaulo/login.html:
 
-1. GET no ponto de entrada do SAML SSO para obter um ``sessionDataKey`` do
-   WSO2 Identity Server.
-2. POST das credenciais no mesmo endpoint de SAML SSO, que devolve um form
-   HTML de auto-submit contendo um ``SAMLResponse`` em base64 (SAML2 HTTP-POST
-   binding).
-3. POST desse ``SAMLResponse`` na Assertion Consumer Service URL do site, que
-   estabelece uma sessão autenticada (cookies) com o backend Adobe AEM.
+1-3. GET do ponto de entrada do SAML SSO, POST das credenciais e POST do
+   ``SAMLResponse`` resultante na Assertion Consumer Service URL do site —
+   essas três etapas são desafiadas por um WAF (Imperva/Incapsula) que exige
+   execução de JavaScript/fingerprinting de navegador, então são delegadas
+   ao add-on ``enel_sp_auth`` (Playwright), em ``addon_client.py``. O
+   resultado são os cookies de sessão já aplicados na sessão ``aiohttp``
+   desta classe.
 4. Chamada ao servlet ``currentuser`` para obter o ``access_token`` da conta
    (um JWT de curta duração) e os identificadores SAP IS-U
    (ANLAGE/VERTRAG/VKONT/PARTNER) necessários para consultar as APIs de
-   negócio hospedadas no Mulesoft.
+   negócio hospedadas no Mulesoft — só usa os cookies já obtidos, sem
+   precisar passar pelo WAF de novo.
 """
 from __future__ import annotations
 
-import html
 import logging
-import re
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 import aiohttp
 
-from .const import ACCOUNTS_ORIGIN, ACS_URL, CURRENTUSER_URL, SAMLSSO_URL, WWW_ORIGIN
+from .const import CURRENTUSER_URL, WWW_ORIGIN
+
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,26 +39,6 @@ _DEBUG_SNIPPET_LEN = 1500
 
 def _host_of(url: str) -> str:
     return urlsplit(url).hostname or ""
-
-
-# O formulário de auto-submit do WSO2 IS usa aspas simples nos atributos
-# (`name='SAMLResponse' value='...'`), diferente do que a maioria dos exemplos
-# de SAML por aí mostra (aspas duplas) — por isso aceitamos os dois estilos e
-# não fixamos a ordem dos atributos dentro da tag <input>.
-_SAML_INPUT_TAG_RE = re.compile(
-    r"<input\b[^>]*\bname=['\"]SAMLResponse['\"][^>]*>", re.IGNORECASE
-)
-_VALUE_ATTR_RE = re.compile(r"value=['\"]([^'\"]*)['\"]")
-
-
-def _extract_saml_response(html_text: str) -> str | None:
-    tag_match = _SAML_INPUT_TAG_RE.search(html_text)
-    if not tag_match:
-        return None
-    value_match = _VALUE_ATTR_RE.search(tag_match.group(0))
-    if not value_match:
-        return None
-    return value_match.group(1)
 
 
 class EnelSPError(Exception):
@@ -104,98 +86,23 @@ class EnelSPAuthMixin:
         self._enel_id: str | None = None
         self._raw_current_user: dict[str, Any] = {}
 
-    async def async_login(self) -> dict[str, Any]:
-        """Executa o fluxo de login SAML completo e busca o perfil da conta.
+    async def async_login(self, hass: "HomeAssistant") -> dict[str, Any]:
+        """Executa o login completo e busca o perfil da conta.
 
         Retorna o payload bruto ``currentUser`` (unidades consumidoras, bandeira
         tarifária, ...).
         """
+        # Import local pra evitar import circular (addon_client.py importa
+        # EnelSPAuthError/EnelSPError deste módulo).
+        from .addon_client import async_login_via_addon
+
         _LOGGER.debug("Starting login (sid=%s)", self._sid)
-        session_data_key = await self._async_get_session_data_key()
-        saml_response = await self._async_submit_credentials(session_data_key)
-        await self._async_submit_saml_response(saml_response)
+        await async_login_via_addon(hass, self._session, self._username, self._password)
         current_user = await self._async_fetch_current_user()
         _LOGGER.debug(
             "Login finished: %d installation(s) found", len(current_user.get("ET_INST", []))
         )
         return current_user
-
-    async def _async_get_session_data_key(self) -> str:
-        # Captura real do navegador: navegação simples de topo, sem Origin/Referer.
-        # Sem header Host explícito aqui: esse GET redireciona entre hosts
-        # diferentes (accounts.enel.com -> www.enel.com.br), e o aiohttp não
-        # atualiza um Host definido explicitamente ao longo dos redirects, só
-        # o que ele mesmo calcula automaticamente — um valor explícito ficaria
-        # desatualizado e quebraria o último salto.
-        async with self._session.get(SAMLSSO_URL, allow_redirects=True) as resp:
-            final_url = resp.url
-            session_data_key = final_url.query.get("sessionDataKey")
-            _LOGGER.debug(
-                "GET %s -> %s %s (final URL host=%s path=%s, sessionDataKey found=%s)",
-                SAMLSSO_URL, resp.status, resp.reason, final_url.host, final_url.path,
-                bool(session_data_key),
-            )
-            if not session_data_key:
-                body = await resp.text()
-                _LOGGER.debug(
-                    "No sessionDataKey in final redirect URL; response body follows:\n%s",
-                    body[:_DEBUG_SNIPPET_LEN],
-                )
-        if not session_data_key:
-            raise EnelSPAuthError("Could not obtain sessionDataKey from accounts.enel.com")
-        return session_data_key
-
-    async def _async_submit_credentials(self, session_data_key: str) -> str:
-        # Corpo do POST idêntico, campo a campo, ao do navegador real
-        # (capturado via HAR), incluindo o par "data" aparentemente redundante:
-        # o EnelCustomBasicAuthenticator do WSO2 pode depender de qualquer uma
-        # das duas representações.
-        payload = [
-            ("login_options", "Email"),
-            ("data", self._username),
-            ("data", self._password),
-            ("username", self._username),
-            ("password", self._password),
-            ("tocommonauth", "true"),
-            ("sessionDataKey", session_data_key),
-        ]
-        headers = {
-            "Host": _host_of(SAMLSSO_URL),
-            "Origin": WWW_ORIGIN,
-            "Referer": f"{WWW_ORIGIN}/",
-        }
-        async with self._session.post(SAMLSSO_URL, data=payload, headers=headers) as resp:
-            text = await resp.text()
-            _LOGGER.debug(
-                "POST %s -> %s %s (%d bytes)", SAMLSSO_URL, resp.status, resp.reason, len(text)
-            )
-
-        saml_response = _extract_saml_response(text)
-        if saml_response is None:
-            _LOGGER.debug(
-                "No SAMLResponse in the login result; response body follows "
-                "(look for an error/CAPTCHA message from Enel):\n%s",
-                text[:_DEBUG_SNIPPET_LEN],
-            )
-            raise EnelSPAuthError("Login failed: no SAMLResponse in the login result (check credentials)")
-        return html.unescape(saml_response)
-
-    async def _async_submit_saml_response(self, saml_response: str) -> None:
-        # Esse POST redireciona internamente (logininterceptor -> post-login.html),
-        # mas fica em www.enel.com.br o tempo todo, então um Host explícito é seguro.
-        headers = {
-            "Host": _host_of(ACS_URL),
-            "Origin": ACCOUNTS_ORIGIN,
-            "Referer": f"{ACCOUNTS_ORIGIN}/",
-        }
-        async with self._session.post(
-            ACS_URL, data={"SAMLResponse": saml_response}, headers=headers, allow_redirects=True
-        ) as resp:
-            body = await resp.read()
-            _LOGGER.debug(
-                "POST %s -> %s %s (final URL=%s, %d bytes)",
-                ACS_URL, resp.status, resp.reason, resp.url, len(body),
-            )
 
     async def _async_fetch_current_user(self) -> dict[str, Any]:
         headers = {

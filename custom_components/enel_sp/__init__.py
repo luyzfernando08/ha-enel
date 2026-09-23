@@ -5,10 +5,11 @@ import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import issue_registry as ir
 
 from .api import EnelSPClient
-from .const import CONF_INSTALLATION, DEFAULT_HEADERS
-from .coordinator import EnelSPCoordinator
+from .const import CONF_INSTALLATION, DEFAULT_HEADERS, DOMAIN
+from .coordinator import EnelSPCoordinator, issue_ids_for_entry
 
 PLATFORMS: list[Platform] = [
     Platform.SENSOR,
@@ -44,4 +45,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: EnelSPConfigEntry) -> bo
 
 async def async_unload_entry(hass: HomeAssistant, entry: EnelSPConfigEntry) -> bool:
     """Descarrega uma config entry."""
+    # Evita deixar avisos de bloqueio de WAF/add-on indisponível órfãos
+    # depois que o usuário remove ou recarrega a integração.
+    for issue_id in issue_ids_for_entry(entry.entry_id):
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

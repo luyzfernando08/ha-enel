@@ -8,7 +8,10 @@ import aiohttp
 import voluptuous as vol
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.hassio import is_hassio
 
+from .addon_client import EnelSPAddonUnavailableError, EnelSPWafBlockedError
 from .api import EnelSPAuthError, EnelSPClient, EnelSPError, Installation
 from .const import CONF_INSTALLATION, DEFAULT_HEADERS, DOMAIN
 
@@ -26,15 +29,18 @@ STEP_USER_SCHEMA = vol.Schema(
 )
 
 
-async def _async_validate_login(username: str, password: str) -> list[Installation]:
-    """Faz login e retorna as unidades consumidoras vinculadas à conta.
+async def _async_validate_login(
+    hass: HomeAssistant, username: str, password: str
+) -> list[Installation]:
+    """Faz login (via add-on Playwright) e retorna as unidades consumidoras
+    vinculadas à conta.
 
     Usa uma sessão aiohttp privada, então esse teste nunca compartilha cookies
     com a sessão de uma config entry em execução.
     """
     async with aiohttp.ClientSession(headers=DEFAULT_HEADERS) as session:
         client = EnelSPClient(session, username, password)
-        await client.async_login()
+        await client.async_login(hass)
         return client.get_installations()
 
 
@@ -52,16 +58,27 @@ class EnelSPConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        # O add-on `enel_sp_auth` (Playwright), obrigatório para o login,
+        # só existe sob Home Assistant OS/Supervised.
+        if not is_hassio(self.hass):
+            return self.async_abort(reason="not_hassio")
+
         errors: dict[str, str] = {}
 
         if user_input is not None:
             username = user_input[CONF_USERNAME]
             password = user_input[CONF_PASSWORD]
             try:
-                installations = await _async_validate_login(username, password)
+                installations = await _async_validate_login(self.hass, username, password)
             except EnelSPAuthError as err:
                 _LOGGER.debug("Login validation failed: %s", err)
                 errors["base"] = "invalid_auth"
+            except EnelSPWafBlockedError as err:
+                _LOGGER.debug("Login blocked by WAF: %s", err)
+                errors["base"] = "waf_blocked"
+            except EnelSPAddonUnavailableError as err:
+                _LOGGER.debug("Add-on unavailable: %s", err)
+                errors["base"] = "addon_unavailable"
             except (EnelSPError, aiohttp.ClientError) as err:
                 _LOGGER.debug("Could not connect to Enel SP: %s", err)
                 errors["base"] = "cannot_connect"
@@ -143,10 +160,16 @@ class EnelSPConfigFlow(ConfigFlow, domain=DOMAIN):
             username = user_input[CONF_USERNAME]
             password = user_input[CONF_PASSWORD]
             try:
-                installations = await _async_validate_login(username, password)
+                installations = await _async_validate_login(self.hass, username, password)
             except EnelSPAuthError as err:
                 _LOGGER.debug("Login validation failed: %s", err)
                 errors["base"] = "invalid_auth"
+            except EnelSPWafBlockedError as err:
+                _LOGGER.debug("Login blocked by WAF: %s", err)
+                errors["base"] = "waf_blocked"
+            except EnelSPAddonUnavailableError as err:
+                _LOGGER.debug("Add-on unavailable: %s", err)
+                errors["base"] = "addon_unavailable"
             except (EnelSPError, aiohttp.ClientError) as err:
                 _LOGGER.debug("Could not connect to Enel SP: %s", err)
                 errors["base"] = "cannot_connect"

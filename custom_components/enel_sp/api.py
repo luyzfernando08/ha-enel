@@ -9,9 +9,8 @@ import base64
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
-from zoneinfo import ZoneInfo
 
 import aiohttp
 
@@ -21,7 +20,6 @@ from .auth import (
     EnelSPError,
     Installation,
     _DEBUG_SNIPPET_LEN,
-    _extract_saml_response,  # noqa: F401  (re-exportado pra quem já importa daqui)
     _host_of,
 )
 from .const import (
@@ -29,11 +27,11 @@ from .const import (
     BILLANALYSIS_URL,
     CANAL,
     COD_SISTEMA,
+    DEFAULT_UPDATE_INTERVAL,
     GENERATE_PDF_URL,
     GETCLIENTBILLS_URL,
     PORTALHISTORYINFO_URL,
-    SMARTMETER_ACTIVE_ENERGY_REGISTER,
-    SMARTMETER_CHART_URL,
+    SAO_PAULO_TZ,
     WWW_ORIGIN,
 )
 
@@ -45,13 +43,6 @@ _PT_MONTHS = {
     "dezembro": 12,
 }
 _NEXT_READING_RE = re.compile(r"(\d{1,2})\s+de\s+([A-Za-zçÇ]+)", re.IGNORECASE)
-
-# Abreviação de 3 letras usada em T_GRAPHIC_MONTH (diferente do texto por
-# extenso de E_PROX_LEIT, daí um mapa separado de _PT_MONTHS).
-_PT_MONTH_ABBR = {
-    "JAN": 1, "FEV": 2, "MAR": 3, "ABR": 4, "MAI": 5, "JUN": 6,
-    "JUL": 7, "AGO": 8, "SET": 9, "OUT": 10, "NOV": 11, "DEZ": 12,
-}
 
 
 def _strip_accents(text: str) -> str:
@@ -102,171 +93,28 @@ def _parse_next_reading_date(text: str | None, reference: date | None) -> date |
     return candidate
 
 
-# As UCs da Enel SP ficam todas na região de São Paulo, então usamos esse
-# fuso fixo pra interpretar as datas/horas do medidor — não o fuso do
-# servidor onde o Home Assistant roda, que pode ser outro.
-_SAO_PAULO_TZ = ZoneInfo("America/Sao_Paulo")
+_READING_BUFFER = timedelta(days=1)
 
 
-def _format_sm_date(value: datetime) -> str:
-    # O app web monta esse timestamp com os componentes de hora LOCAL e cola
-    # um "Z" no final mesmo não sendo UTC de verdade (bug deles). Reproduzimos
-    # o mesmo formato porque é o que o backend espera receber.
-    return value.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+def compute_next_update_interval(
+    next_reading_date: date | None, now: datetime | None = None
+) -> timedelta:
+    """Intervalo até a próxima atualização agendada: ``next_reading_date + 1
+    dia`` (a Enel costuma fechar a leitura no próprio dia, então esperamos
+    mais um dia pra garantir que o dado já esteja disponível no portal).
 
-
-def _smart_meter_date_range(now: datetime | None = None) -> tuple[str, str]:
-    """Últimos 7 dias terminando ontem — a mesma janela que o app web pede.
-
-    O dia de hoje nunca é incluído: o medidor ainda não fechou a leitura dele.
+    Cai no ``DEFAULT_UPDATE_INTERVAL`` (fallback) se ``next_reading_date`` não
+    vier informado, ou se o alvo calculado já estiver no passado/presente —
+    o que indicaria um dado desatualizado, não um agendamento válido.
     """
-    reference = (now or datetime.now(_SAO_PAULO_TZ)).astimezone(_SAO_PAULO_TZ)
-    end = (reference - timedelta(days=1)).replace(
-        hour=23, minute=59, second=59, microsecond=0
-    )
-    start = (end - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
-    return _format_sm_date(start), _format_sm_date(end)
-
-
-def smart_meter_month_history(chart_data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Converte ``T_GRAPHIC_MONTH`` (do próprio ``smartmetergetconsumptionchartdata``)
-    para o mesmo formato do ``ET_MEDIA_CONS`` (``portalhistoryinfo``), pra dar
-    pra reaproveitar ``build_consumption_statistics`` sem duplicar o parsing.
-
-    Ao contrário de ``T_GRAPHIC_HOUR``, que só traz os dias dentro do
-    ``StartDate``/``EndDate`` pedido, ``T_GRAPHIC_MONTH`` devolve o histórico
-    mensal inteiro do medidor **independente da janela pedida** — confirmado
-    numa captura real, em que uma janela de 8 dias trouxe 11 meses de
-    histórico junto. Por isso essa é a fonte preferida do histórico mensal
-    (mais completa que o ``portalhistoryinfo``, que costuma trazer bem menos
-    meses).
-    """
-    months: list[dict[str, Any]] = []
-    for item in chart_data.get("T_GRAPHIC_MONTH", []):
-        mes = _PT_MONTH_ABBR.get(str(item.get("Month", "")).upper())
-        ano_raw = item.get("Year")
-        consumo = item.get("ConsumoKW")
-        if mes is None or not ano_raw or consumo is None:
-            continue
-        try:
-            ano = int(ano_raw)
-            ano = 2000 + ano if ano < 100 else ano
-            months.append(
-                {
-                    "MESREF": f"{mes:02d}/{ano}",
-                    "CONSUMO": float(consumo),
-                    # Data real de fechamento do ciclo (YYYYMMDD) — usada por
-                    # build_consumption_statistics pra saber com precisão
-                    # quais meses já fecharam de verdade, em vez de assumir
-                    # que é sempre o último item do array (ver LastReading).
-                    "DATA_FECHAMENTO": str(item.get("Date") or ""),
-                }
-            )
-        except (TypeError, ValueError):
-            continue
-    return months
-
-
-def build_consumption_statistics(
-    monthly_history: list[dict[str, Any]],
-    hourly_data: list[dict[str, Any]],
-    last_reading: str | None = None,
-) -> list[dict[str, Any]]:
-    """Monta a série de consumo (kWh) usada para alimentar o Painel de Energia.
-
-    Usa os meses já fechados do histórico mensal como base histórica,
-    excluindo o(s) que ainda não fecharam de verdade — eles cobrem o mesmo
-    período que os dados horários do medidor inteligente abaixo, e somar os
-    dois contaria o mesmo consumo duas vezes. Em seguida, continua a soma
-    cumulativa com os dados horários reais do medidor (``T_GRAPHIC_HOUR``,
-    registrador de energia ativa).
-
-    ``monthly_history`` normalmente vem de ``smart_meter_month_history()``
-    (preferencial) ou do ``ET_MEDIA_CONS`` do ``portalhistoryinfo``
-    (fallback) — mesmo formato ``{"MESREF": "MM/AAAA", "CONSUMO": kWh}`` nos
-    dois casos.
-
-    ``last_reading`` é o ``LastReading`` (``YYYYMMDD``) do
-    ``smartmetergetconsumptionchartdata`` — a data em que o ciclo de leitura
-    mais recente fechou de verdade segundo o próprio medidor. Isso importa
-    porque o ciclo de leitura **não é necessariamente alinhado ao mês
-    calendário** (o dia do mês em que fecha varia por conta e pode até mudar
-    ao longo do tempo — não é um valor fixo, por isso sempre lemos
-    ``LastReading`` em vez de assumir um dia): sem ``last_reading``, cai no
-    fallback de assumir que é sempre o último item do array que ainda está
-    em andamento (correto na maioria das vezes, mas impreciso perto da
-    virada do mês quando o ciclo não fecha no dia 1). Com ``last_reading``,
-    mês e hora são filtrados pela mesma fronteira real
-    (``DATA_FECHAMENTO``/``Date`` <= ou > ``last_reading``), o que evita tanto
-    contar consumo em dobro quanto deixar uma lacuna nos dias entre a virada
-    do mês calendário e o fechamento de fato do ciclo.
-
-    Sempre recalcula a série inteira a partir do zero: como
-    ``async_add_external_statistics`` faz upsert por timestamp, reenviar os
-    mesmos pontos em cada atualização é seguro (idempotente) e nunca conta
-    consumo duas vezes nem deixa a soma cumulativa diminuir.
-    """
-    months: list[tuple[str, datetime, float, str]] = []
-    for item in monthly_history:
-        mesref = item.get("MESREF")
-        consumo = item.get("CONSUMO")
-        if not mesref or consumo is None or "/" not in mesref:
-            continue
-        try:
-            mm, yyyy = mesref.split("/")
-            sort_key = f"{yyyy}{mm}"
-            # Precisa ser fuso horário de São Paulo, igual aos pontos horários
-            # abaixo: meia-noite UTC do dia 1 é 21h do dia 30 do mês anterior
-            # em horário local, e o HA agrupa "Mês" pelo fuso local — isso
-            # jogava o ponto inteiro pro mês errado (o anterior).
-            start = datetime(int(yyyy), int(mm), 1, tzinfo=_SAO_PAULO_TZ)
-            fechamento = str(item.get("DATA_FECHAMENTO") or "")
-            months.append((sort_key, start, float(consumo), fechamento))
-        except (ValueError, TypeError):
-            continue
-    months.sort(key=lambda m: m[0])
-
-    if last_reading and all(m[3] for m in months):
-        months = [m for m in months if m[3] <= last_reading]
-    else:
-        months = months[:-1]
-
-    hours: list[tuple[datetime, float]] = []
-    for item in hourly_data:
-        if item.get("Register") != SMARTMETER_ACTIVE_ENERGY_REGISTER:
-            continue
-        date_str, time_str, consumo_str = (
-            item.get("Date"), item.get("Time"), item.get("ConsumoKW")
-        )
-        if not date_str or not time_str or consumo_str is None:
-            continue
-        if last_reading and date_str <= last_reading:
-            # Já coberto pelo ciclo fechado correspondente em `months` —
-            # incluir de novo aqui contaria o mesmo consumo duas vezes.
-            continue
-        try:
-            start = datetime.strptime(
-                f"{date_str}{time_str}", "%Y%m%d%H%M%S"
-            ).replace(tzinfo=_SAO_PAULO_TZ)
-            hours.append((start, float(consumo_str)))
-        except (ValueError, TypeError):
-            continue
-    hours.sort(key=lambda h: h[0])
-
-    # "state" fica igual a "sum": é um registrador cumulativo (como o do
-    # medidor físico), não um sensor com leitura instantânea própria. Sem
-    # isso, cartões genéricos de estatística que pedem "Estado" em vez de
-    # "Soma" (o tipo que o Painel de Energia usa) mostram o gráfico vazio.
-    running_sum = 0.0
-    statistics: list[dict[str, Any]] = []
-    for _, start, consumo, _fechamento in months:
-        running_sum += consumo
-        statistics.append({"start": start, "sum": running_sum, "state": running_sum})
-    for start, consumo in hours:
-        running_sum += consumo
-        statistics.append({"start": start, "sum": running_sum, "state": running_sum})
-
-    return statistics
+    reference = now or datetime.now(SAO_PAULO_TZ)
+    if next_reading_date is None:
+        return DEFAULT_UPDATE_INTERVAL
+    target = datetime.combine(
+        next_reading_date, time.min, tzinfo=SAO_PAULO_TZ
+    ) + _READING_BUFFER
+    delta = target - reference
+    return delta if delta > timedelta(0) else DEFAULT_UPDATE_INTERVAL
 
 
 class EnelSPApiError(EnelSPError):
@@ -414,34 +262,6 @@ class EnelSPClient(EnelSPAuthMixin):
                 "I_BELNR": belnr,
                 "I_ID": "",
                 "I_SSO_GUID": "",
-            },
-        )
-
-    async def async_get_smart_meter_chart_data(self, installation: Installation) -> dict[str, Any]:
-        """Consumo por hora/dia/mês do medidor inteligente (só UCs com SMARTMETER=X).
-
-        Usada para alimentar estatísticas do Painel de Energia, não para sensores.
-        """
-        start_date, end_date = _smart_meter_date_range()
-        return await self._async_post_business(
-            SMARTMETER_CHART_URL,
-            "SmartMeter",
-            {
-                "Contract": installation.vertrag,
-                "ContractAccount": installation.vkont,
-                "PartnerNumber": installation.partner,
-                "AtendCanal": CANAL,
-                "ServiceCode": "GF",
-                "InstallationNumber": installation.anlage,
-                "Meter": installation.serial,
-                "StartDate": start_date,
-                "EndDate": end_date,
-                "TimeScale": "D",
-                "T_REGISTERS": ["03", "04", "06", "08"],
-                "I_CANAL": CANAL,
-                "I_VKONT": installation.vkont,
-                "I_VERTRAG": installation.vertrag,
-                "I_PARTNER": installation.partner,
             },
         )
 

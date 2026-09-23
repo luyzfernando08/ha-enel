@@ -1,0 +1,27 @@
+name: "Enel SP Auth"
+version: "0.1.0"
+slug: "enel_sp_auth"
+description: "Login automatizado (Playwright) no portal da Enel SP, usado pela integração enel_sp para passar pelo desafio anti-bot do WAF"
+url: "https://github.com/luyzfernando08/ha-enel"
+arch:
+  - amd64
+  - aarch64
+init: false
+startup: application
+boot: auto
+hassio_api: true
+hassio_role: default
+map:
+  - share:rw
+# Expõe a porta interna do container ao host, com mapeamento padrão
+# 8978->8978. Declarar "ports" aqui já dá, de graça, uma aba "Rede" na UI
+# do HA (Configurações -> Add-ons -> Enel SP Auth -> Rede) onde o usuário
+# remapeia pra outra porta do host, sem precisar editar nenhum arquivo. A
+# comunicação interna Core<->add-on (custom_components/enel_sp/addon_client.py)
+# não passa por esse mapeamento — usa sempre a porta interna fixa (8978),
+# então mudar aqui não quebra a integração; só muda o que fica acessível
+# de fora, por exemplo pra testar com `curl http://<ip-do-ha>:<porta>/api/health`.
+ports:
+  8978/tcp: 8978
+ports_description:
+  8978/tcp: "API HTTP do Enel SP Auth (usada pela integração enel_sp)"

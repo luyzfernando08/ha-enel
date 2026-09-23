@@ -1,12 +1,11 @@
 {
   "domain": "enel_sp",
   "name": "Enel São Paulo",
-  "after_dependencies": ["recorder"],
   "codeowners": ["@luyzfernando08"],
   "config_flow": true,
   "documentation": "https://github.com/luyzfernando08/ha-enel",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/luyzfernando08/ha-enel/issues",
   "requirements": ["qrcode==7.4.2", "Pillow>=10.0.0"],
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

@@ -1,12 +1,18 @@
 """Constantes da integração Enel São Paulo."""
 from datetime import timedelta
+from zoneinfo import ZoneInfo
 
 DOMAIN = "enel_sp"
 
-SP_ENTITY_ID = "ENEL_SP_WEB_BRA"
+# As UCs da Enel SP ficam todas na região de São Paulo, então usamos esse
+# fuso fixo pra interpretar datas/horas da própria Enel (leitura do medidor,
+# agendamento) — não o fuso do servidor onde o Home Assistant roda.
+SAO_PAULO_TZ = ZoneInfo("America/Sao_Paulo")
 
-SAMLSSO_URL = f"https://accounts.enel.com/samlsso?spEntityID={SP_ENTITY_ID}"
-ACS_URL = "https://www.enel.com.br/pt-saopaulo/login.html"
+# SP_ENTITY_ID, a URL do samlsso e a Assertion Consumer Service URL não são
+# mais usadas aqui: essas etapas do login (desafiadas pelo WAF) foram
+# movidas para o add-on `enel_sp_auth` (ver addon_client.py), que mantém sua
+# própria cópia dessas constantes em `enel_sp_auth/rootfs/app/`.
 CURRENTUSER_URL = "https://www.enel.com.br/bin/enel-br/pt-saopaulo/currentuser"
 
 PORTALWEB_BASE = "https://exp-portalweb-pro.de-c1.eu1.cloudhub.io/api"
@@ -22,23 +28,16 @@ PORTALHISTORYINFO_URL = f"{PORTALSP_BASE}/portalhistoryinfo"
 # O caminho do endpoint está com erro de digitação ("billanalisys") no próprio
 # servidor da Enel; mantido igual ao original.
 BILLANALYSIS_URL = f"{PORTALSP_BASE}/billanalisys"
-SMARTMETER_CHART_URL = f"{PORTALWEB_BASE}/smartmetergetconsumptionchartdata"
 GENERATE_PDF_URL = f"{PORTALSP_BASE}/generatepdf"
 
 # Subpasta de config/www/ onde o PDF da fatura é salvo (servida pelo HA em
 # /local/<PDF_SUBDIR>/... sem exigir login).
 PDF_SUBDIR = "enel_sp"
 
-# Registrador do medidor inteligente que representa energia ativa consumida
-# (os outros três valores pedidos pelo app, "04"/"06"/"08", não trazem dados
-# para uma UC residencial monofásica como as que testamos).
-SMARTMETER_ACTIVE_ENERGY_REGISTER = "03"
-
 CANAL = "ZINT"
 COD_SISTEMA = "WEB"
 
 WWW_ORIGIN = "https://www.enel.com.br"
-ACCOUNTS_ORIGIN = "https://accounts.enel.com"
 
 # O site fica atrás de um WAF (Imperva) que costuma desafiar requisições que
 # não parecem vir de um navegador de verdade (headers padrão do aiohttp, sem
@@ -55,6 +54,11 @@ DEFAULT_HEADERS = {
 
 CONF_INSTALLATION = "installation"
 
+# Usado só como intervalo inicial (antes da primeira leitura) e como
+# fallback quando `next_reading_date` não vier informado pela Enel — o
+# intervalo de regime normal é recalculado dinamicamente a cada atualização
+# (ver `api.compute_next_update_interval`), com base na próxima leitura do
+# medidor informada pela própria Enel.
 DEFAULT_UPDATE_INTERVAL = timedelta(hours=24)
 
 ATTR_DUE_DATE = "vencimento"

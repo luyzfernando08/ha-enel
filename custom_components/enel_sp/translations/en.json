@@ -27,11 +27,24 @@
     "error": {
       "invalid_auth": "Invalid username or password",
       "cannot_connect": "Could not connect to the Enel website",
-      "no_installations": "No supply points found for this account"
+      "no_installations": "No supply points found for this account",
+      "waf_blocked": "The Enel portal blocked the login attempt (anti-bot protection). This is not a username/password issue — try again later",
+      "addon_unavailable": "Could not reach the \"Enel SP Auth\" add-on. Make sure it is installed and started"
     },
     "abort": {
       "already_configured": "This supply point is already configured",
-      "reauth_successful": "Re-authenticated successfully"
+      "reauth_successful": "Re-authenticated successfully",
+      "not_hassio": "This integration requires the \"Enel SP Auth\" add-on, only available on Home Assistant OS/Supervised instances"
+    }
+  },
+  "issues": {
+    "waf_blocked": {
+      "title": "Login blocked by Enel's WAF",
+      "description": "The \"Enel SP Auth\" add-on could not complete the login — the Enel portal is blocking automated access. This is not a username/password issue; the integration will keep retrying automatically on the next cycles."
+    },
+    "addon_unavailable": {
+      "title": "\"Enel SP Auth\" add-on unavailable",
+      "description": "Install and start the \"Enel SP Auth\" add-on from the Supervisor add-on store so the integration can log in."
     }
   },
   "entity": {
@@ -50,6 +63,9 @@
       },
       "data_leitura_atual": {
         "name": "Current reading date"
+      },
+      "data_proxima_atualizacao": {
+        "name": "Next update"
       },
       "valor_medidor_anterior": {
         "name": "Previous meter reading"

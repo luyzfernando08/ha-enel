@@ -4,9 +4,10 @@
 > implementação. Para instalar e usar a integração, veja o [README](README.md).
 
 Detalhes de implementação da integração não-oficial (HACS) da Enel São Paulo:
-de onde vem cada campo, como funciona o login SAML reproduzido de
-[www.enel.com.br/pt-saopaulo](https://www.enel.com.br/pt-saopaulo/login.html) e
-como a integração alimenta o Painel de Energia do Home Assistant.
+de onde vem cada campo, como funciona o login SAML de
+[www.enel.com.br/pt-saopaulo](https://www.enel.com.br/pt-saopaulo/login.html)
+e por que parte desse login roda dentro do add-on **Enel SP Auth**
+(Playwright), não na própria integração.
 
 Não possui nenhum vínculo com a Enel. Use por sua conta e risco — é engenharia
 reversa de uma API não documentada, que pode mudar sem aviso.
@@ -18,6 +19,10 @@ reversa de uma API não documentada, que pode mudar sem aviso.
 - **Bandeira tarifária** (`sensor`) — verde / amarela / vermelha 1 / vermelha 2.
 - **Medidor inteligente** (`binary_sensor`, diagnóstico) — indica se a UC tem smart meter.
 - **Data da leitura atual** / **Data da próxima leitura** (`sensor`, timestamp).
+- **Próxima atualização** (`sensor`, timestamp, diagnóstico) — horário estimado
+  do próximo ciclo automático (`coordinator.next_update`), calculado a partir
+  de `next_reading_date + 1 dia` (ver "Periodicidade da atualização" abaixo).
+  Não muda com um refresh manual pelo botão.
 - **Valor do medidor atual** (`sensor`, kWh, sem casas decimais) — leitura do
   registrador do medidor.
 - **Valor do medidor anterior** (`sensor`, kWh, sem casas decimais) — calculado
@@ -50,10 +55,11 @@ reversa de uma API não documentada, que pode mudar sem aviso.
 - **Consumo médio diário** (`sensor`, kWh/d) e **Gasto médio diário**
   (`sensor`, R$/d) — médias do ciclo de faturamento mais recente.
 - **Atualizar dados** (`button`, config) — força uma atualização imediata,
-  sem esperar o próximo ciclo de 24h. O estado do próprio botão já é o horário
-  do último aperto manual (padrão do HA); o atributo `ultima_atualizacao`
-  guarda o horário da última atualização bem-sucedida, seja manual (por esse
-  botão) ou automática (do ciclo periódico).
+  sem esperar o próximo ciclo agendado (ver "Periodicidade da atualização"
+  abaixo). O estado do próprio botão já é o horário do último aperto manual
+  (padrão do HA); o atributo `ultima_atualizacao` guarda o horário da última
+  atualização bem-sucedida, seja manual (por esse botão) ou automática (do
+  ciclo periódico).
 
 O sensor de consumo traz em `historico` os últimos meses de consumo (kWh) e valor
 (R$) faturado, úteis para gráficos.
@@ -133,75 +139,45 @@ Cada atualização substitui o arquivo pelo PDF da fatura mais recente daquele
 momento; o nome do arquivo (`<anlage>.pdf`) é fixo por unidade consumidora,
 então o link não muda com o tempo.
 
-## Painel de Energia
+## Periodicidade da atualização
 
-Para UCs com medidor inteligente (`SMARTMETER: "X"`), a integração alimenta o
-**Painel de Energia** do HA diretamente com estatísticas de longo prazo — sem
-criar nenhum sensor visível para isso. A série fica disponível em
-**Configurações → Dispositivos e Serviços → Estatísticas de longo prazo**
-como `Enel SP consumo (<apelido/endereço da UC>)` (id interno
-`enel_sp:consumption_<anlage>`) — adicione-a como fonte de consumo da rede no
-Painel de Energia.
+A atualização automática **não é diária**: a cada atualização bem-sucedida,
+`coordinator._async_update_data()` recalcula `self.update_interval` chamando
+`api.compute_next_update_interval(data.next_reading_date)`, que agenda a
+próxima para `next_reading_date + 1 dia` (a data da próxima leitura do
+medidor, informada pela própria Enel via `billanalysis` → `E_PROX_LEIT`). Na
+prática isso roda em torno de **uma vez por ciclo de faturamento (~30
+dias)**, não a cada poucas horas.
 
-| Trecho da série | Endpoint (`Funcionalidad`) | Campo(s) de origem |
-|---|---|---|
-| Ciclos já fechados (base histórica) | `smartmetergetconsumptionchartdata` | `T_GRAPHIC_MONTH[].ConsumoKW`, um ponto no início de cada ciclo — só os que já fecharam de verdade (ver abaixo). Fallback: `ET_MEDIA_CONS` do `portalhistoryinfo`, se o medidor não trouxer `T_GRAPHIC_MONTH` |
-| Ciclo em andamento, por hora | `smartmetergetconsumptionchartdata` | `T_GRAPHIC_HOUR[]` com `Register == "03"` (energia ativa) → `ConsumoKW` (kWh, apesar do nome), por `Date`+`Time` |
+Isso é proposital: reduz a frequência de logins automatizados e, com isso, o
+risco de o WAF da Enel escalar a resposta a esses logins (ver "Fluxo de
+login" abaixo). Cai de volta para `const.DEFAULT_UPDATE_INTERVAL` (24h) só
+como *fallback*, quando `next_reading_date` não vem informado ou quando o
+alvo calculado já ficaria no passado (dado desatualizado).
 
-Os dois trechos vêm da **mesma chamada** ao `smartmetergetconsumptionchartdata`,
-mas se comportam diferente quanto à janela de datas pedida
-(`StartDate`/`EndDate`, hoje fixada nos últimos 7 dias): `T_GRAPHIC_MONTH`
-devolve o histórico inteiro do medidor **independente dessa janela**
-(confirmado numa captura real: uma janela de 8 dias pedida trouxe 11 meses de
-histórico), enquanto `T_GRAPHIC_HOUR` só traz as horas dentro da janela
-pedida. Por isso a base histórica usa `T_GRAPHIC_MONTH` (mais completo que o
-`portalhistoryinfo`, que costuma trazer bem menos meses) e só a parte
-horária do ciclo em andamento precisa do truque abaixo.
+Isso vale só para o polling automático — o botão **Atualizar dados** sempre
+força uma atualização imediata, fora desse agendamento.
 
-**O ciclo de leitura do medidor não é necessariamente alinhado ao mês
-calendário** — o dia do mês em que ele fecha varia de conta pra conta e pode
-até mudar ao longo do tempo (não é um valor fixo, então o código nunca
-assume um dia específico). Numa captura real, por exemplo, o ciclo fechou em
-10/08 — um ponto de `T_GRAPHIC_MONTH` rotulado "JUL" tinha `Date` em agosto,
-porque é o ciclo que cobre majoritariamente julho mas só fecha em 10/08
-daquela conta. A resposta traz um campo `LastReading` (`AAAAMMDD`) com a
-data em que o ciclo mais recente fechou de verdade, seja qual for esse dia —
-essa é a fronteira real usada nos dois lados: só entram na base histórica os
-ciclos de `T_GRAPHIC_MONTH` com `Date <= LastReading`, e só entram na soma
-horária os pontos de `T_GRAPHIC_HOUR` com `Date > LastReading`. Usar o mês
-calendário (dia 1) como fronteira, em vez do `LastReading`, abriria uma
-lacuna entre a virada do mês e o fechamento de fato do ciclo (quando esse
-não cai no dia 1), e a seguir contaria esses mesmos dias em dobro assim que
-o ciclo fechasse e entrasse como total mensal fechado.
+## Painel de Energia (removido)
 
-Como `T_GRAPHIC_HOUR` é limitado à janela de 7 dias pedida, a integração
-mantém um **cache local por UC** (arquivo em
-`.storage/enel_sp_smartmeter_hours_<anlage>`) que vai fundindo cada nova
-janela recebida, acumulando o ciclo em andamento hora a hora em vez de
-descartar os dias que saem da janela a cada atualização. O cache é podado
-pelo mesmo `LastReading`: assim que o ciclo fecha, os dias que ele cobre
-saem do cache (já entram pelo total mensal fechado) e só sobra o que ainda
-não fechou. Na prática isso só deixa uma lacuna real se a integração
-instalar no meio de um ciclo (sem cobrir os dias anteriores à instalação) ou
-se o Home Assistant ficar mais de 7 dias seguidos sem conseguir atualizar.
-
-A cada atualização a série inteira é recalculada a partir do histórico
-fechado + cache acumulado e reenviada (é seguro, o Home Assistant faz
-*upsert* por horário), então não há risco de contar consumo em duplicidade
-— e correções que a Enel eventualmente fizer em dados passados (leitura
-estimada trocada por real, por exemplo) se propagam sozinhas no próximo
-ciclo.
+Até uma versão anterior, UCs com medidor inteligente tinham o consumo
+horário/mensal (`smartmetergetconsumptionchartdata`) enviado como estatística
+de longo prazo para o Painel de Energia do HA. Essa funcionalidade foi
+removida: exigia chamadas extras a cada atualização (mais uma superfície de
+exposição ao WAF) para um ganho que não compensava a complexidade adicional
+depois que a atualização automática passou a ser mensal, não diária — o
+Painel de Energia é feito para granularidade fina, que deixou de fazer
+sentido nesse novo ritmo. O sensor "Medidor inteligente" (`binary_sensor`)
+continua existindo normalmente; só a exportação para estatísticas de longo
+prazo saiu.
 
 ## Instalação
 
-1. HACS → menu (⋮) → **Repositórios personalizados** → adicione a URL deste
-   repositório como tipo **Integration**.
-2. Instale "Enel São Paulo" e reinicie o Home Assistant.
-3. Configurações → Dispositivos e Serviços → Adicionar integração → **Enel São Paulo**.
-4. Informe o mesmo usuário (e-mail ou CPF) e senha usados em
-   [www.enel.com.br](https://www.enel.com.br/pt-saopaulo/login.html). Se a conta
-   tiver mais de uma unidade consumidora, você escolhe qual adicionar (repita o
-   fluxo para adicionar as demais).
+Passo a passo completo (com os botões de atalho) no [README](README.md#instalação).
+Resumo: instale e inicie o add-on **Enel SP Auth** primeiro (obrigatório,
+só HAOS/Supervised — sem ele o login toma `403` do WAF, ver "Fluxo de
+login" abaixo), depois instale a integração via HACS e adicione-a
+normalmente em Configurações → Dispositivos e Serviços.
 
 ### Ícone da integração
 
@@ -221,67 +197,92 @@ deste documento.
 O site usa um **WSO2 Identity Server** (`accounts.enel.com`) para SSO via
 SAML2 e uma **API de negócio hospedada no Mulesoft** para os dados de
 fatura/consumo. Não há endpoint de *refresh*: o token dura ~4h e cada
-atualização periódica (padrão: 24h) repete o login inteiro.
+atualização repete o login inteiro (ver "Periodicidade da atualização"
+acima para a frequência real desse ciclo).
+
+As três primeiras etapas (obter `sessionDataKey`, enviar credenciais, enviar
+o `SAMLResponse` resultante para o ACS) são exatamente as que o WAF
+Imperva/Incapsula desafia com validação de JavaScript/fingerprinting de
+navegador — por isso rodam dentro de um Chromium real controlado pelo
+add-on **Enel SP Auth** (Playwright), não via `aiohttp` puro. O restante do
+fluxo (`currentuser` em diante) continua sendo `aiohttp` puro na
+integração, usando os cookies que o add-on devolve.
 
 ```mermaid
 sequenceDiagram
     participant I as Integração (HA)
+    participant P as Add-on Enel SP Auth<br/>(Playwright/Chromium)
     participant W as accounts.enel.com<br/>(WSO2 Identity Server)
     participant A as www.enel.com.br<br/>(Adobe AEM)
     participant M as Mulesoft<br/>(APIs de negócio)
 
-    I->>W: GET /samlsso?spEntityID=ENEL_SP_WEB_BRA
-    W-->>I: 302 (redireciona até A com ?sessionDataKey=...)
+    I->>P: POST /api/login (X-API-Key)<br/>username, password
 
-    I->>W: POST /samlsso<br/>username, password, tocommonauth, sessionDataKey
-    W-->>I: 200 HTML com &lt;input name='SAMLResponse' value='...'&gt;
+    Note over P,W: dentro de um navegador real, headless
+    P->>W: GET /samlsso?spEntityID=ENEL_SP_WEB_BRA
+    W-->>P: 302 (redireciona até A com ?sessionDataKey=...)
+    P->>W: preenche e envia o form (username, password, sessionDataKey)
+    W-->>P: HTML com auto-submit do SAMLResponse
+    P->>A: (auto-submit do navegador) POST /pt-saopaulo/login.html<br/>Assertion Consumer Service, SAMLResponse
+    A-->>P: sessão estabelecida (cookies) — aqui é onde o WAF bloqueava sem JS
 
-    Note over I: extrai o SAMLResponse<br/>(aspas simples, não duplas!)
+    P-->>I: cookies de sessão<br/>(accounts.enel.com + www.enel.com.br)
+    Note over I: injeta os cookies na própria sessão aiohttp<br/>(addon_client.cookies_to_simplecookie)
 
-    I->>A: POST /pt-saopaulo/login.html (Assertion Consumer Service)<br/>SAMLResponse
-    A-->>I: sessão estabelecida (redirects internos: logininterceptor → post-login.html)
-
-    I->>A: POST /bin/enel-br/pt-saopaulo/currentuser<br/>header sid (gerado no cliente)
+    I->>A: POST /bin/enel-br/pt-saopaulo/currentuser<br/>header sid (gerado no cliente) + cookies
     A-->>I: access_token (JWT ~4h) + unidades consumidoras<br/>(ANLAGE/VERTRAG/VKONT/PARTNER)
 
     Note over I,M: headers SID + enel-jwt-token em toda chamada seguinte
 
-    I->>M: POST getAnaliseConsumo / getClientBills / portalhistoryinfo /<br/>billanalysis / smartmetergetconsumptionchartdata
+    I->>M: POST getAnaliseConsumo / getClientBills / portalhistoryinfo / billanalysis
     M-->>I: fatura, consumo, leitura do medidor
 ```
 
 Detalhes que só aparecem numa captura real de rede, não em nenhuma
 documentação da Enel:
 
-- **`SAMLResponse` com aspas simples**: a página de login do WSO2 usa
-  `name='SAMLResponse' value='...'`, não aspas duplas — a maioria dos
-  exemplos de SAML por aí usa aspas duplas, então isso quebra um parser HTML
-  ingênuo (foi exatamente o bug que corrigimos numa iteração anterior).
 - **O header `SID`** não vem do servidor: o app oficial gera um UUID aleatório
   no navegador (`crypto.randomUUID()`) e reaproveita durante a sessão — não
   há validação nenhuma contra ele no backend. A integração faz o mesmo.
 - **O header `enel-jwt-token`** é literalmente o `access_token` devolvido pelo
   `currentuser`.
-- **Origin/Referer/Host** de cada requisição são copiados fielmente do que um
-  navegador de verdade manda (o site fica atrás de um WAF Imperva que
-  desconfia de requisições sem essa cara).
+- **Origin/Referer/Host** de cada requisição feita pela integração via
+  `aiohttp` (`currentuser` em diante) são copiados fielmente do que um
+  navegador de verdade manda. Isso nunca foi suficiente para as três
+  primeiras etapas — WAF Imperva desconfia de qualquer coisa que não
+  execute JS de verdade, headers copiados ou não — daí elas terem migrado
+  pro add-on.
+- **Cookies de dois domínios diferentes** (`accounts.enel.com` e
+  `www.enel.com.br`) precisam conviver na mesma `aiohttp.CookieJar` da
+  integração — `addon_client.cookies_to_simplecookie` monta um `Morsel` por
+  cookie com `domain`/`path` explícitos, em vez de assumir uma única origem.
 
 ## Diagnóstico (login falhando?)
 
-Se o login der erro, ative o log de depuração em `configuration.yaml`:
+O login tem duas metades com logs em lugares diferentes:
 
-```yaml
-logger:
-  default: warning
-  logs:
-    custom_components.enel_sp: debug
-```
+- **Etapas 1-3 (desafiadas pelo WAF)**: acontecem dentro do add-on, não da
+  integração. Veja os logs em **Configurações → Add-ons → Enel SP Auth →
+  aba Registro (Log)** — mostra o resultado de cada tentativa (sucesso,
+  credencial inválida, bloqueio de WAF, timeout), sem nunca registrar a
+  senha.
+- **Etapa 4 em diante (`currentuser`, chamadas de negócio)**: continuam na
+  integração. Ative o log de depuração em `configuration.yaml`:
 
-Reinicie o HA e tente adicionar a integração de novo. Em **Configurações →
-Sistema → Logs** vai aparecer, passo a passo, cada requisição do login (status
-HTTP e, quando falhar, um trecho da resposta da Enel) — isso mostra exatamente
-em qual etapa parou e, se for erro de credenciais/CAPTCHA/bloqueio do WAF, a
-mensagem que a Enel devolveu. A senha nunca é logada.
+  ```yaml
+  logger:
+    default: warning
+    logs:
+      custom_components.enel_sp: debug
+  ```
+
+  Reinicie o HA e tente de novo. Em **Configurações → Sistema → Logs** vai
+  aparecer cada requisição feita pela integração (status HTTP e, quando
+  falhar, um trecho da resposta da Enel). A senha nunca é logada.
+
+Se a integração mostrar um aviso em **Configurações → Repairs**
+(`waf_blocked` ou `addon_unavailable`), comece pelo log do add-on — é lá que
+a causa real normalmente aparece primeiro.
 
 ## Desenvolvimento
 

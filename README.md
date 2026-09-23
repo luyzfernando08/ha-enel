@@ -10,7 +10,15 @@ tarifária da **Enel São Paulo** para dentro do Home Assistant.
 Não possui nenhum vínculo com a Enel. Use por sua conta e risco.
 
 [![Adicionar repositório no HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=luyzfernando08&repository=ha-enel&category=integration)
+[![Adicionar repositório de add-ons](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fluyzfernando08%2Fha-enel)
 [![Adicionar integração](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=enel_sp)
+
+> **Pré-requisito obrigatório:** o portal da Enel bloqueia o login
+> automatizado feito só por requisições HTTP (proteção anti-bot). Por isso,
+> além da integração, é preciso instalar e iniciar o add-on **Enel SP Auth**
+> — veja [enel_sp_auth/README.md](enel_sp_auth/README.md). Só funciona em
+> instâncias **Home Assistant OS ou Supervised** (sem suporte a
+> Core/Container standalone).
 
 ## O que a integração traz
 
@@ -26,26 +34,34 @@ Para cada unidade consumidora cadastrada:
 - Link para abrir a **fatura em PDF** (veja o aviso de segurança abaixo)
 - Consumo e gasto médios diários
 - Datas de leitura do medidor (atual e próxima)
+- Sensor com a data prevista da **próxima atualização automática**
 - Um botão para **atualizar os dados** na hora, sem esperar o ciclo automático
 
-Para unidades com **medidor inteligente**, o histórico de consumo também é
-enviado direto para o **Painel de Energia** do Home Assistant.
-
-Os dados são atualizados automaticamente a cada 24 horas (intervalo
-conservador, para evitar bloqueios).
+> **Atenção: a atualização automática NÃO é diária.** A integração agenda a
+> próxima atualização para um dia depois da próxima leitura do medidor
+> informada pela própria Enel — ou seja, roda em torno de **uma vez por
+> ciclo de faturamento (~30 dias)**, não a cada poucas horas. Isso é
+> proposital: reduz a frequência de logins automatizados e o risco de
+> bloqueio pelo WAF da Enel. Se quiser dados na hora (por exemplo, depois de
+> pagar uma fatura), use o botão **"Atualizar dados"** da integração em vez
+> de esperar o ciclo automático.
 
 ## Instalação
 
-1. Clique no botão **"Adicionar repositório no HACS"** acima (ou, no HACS,
+1. Clique no botão **"Adicionar repositório de add-ons"** acima e instale e
+   inicie o add-on **Enel SP Auth** — detalhes em
+   [enel_sp_auth/README.md](enel_sp_auth/README.md). Sem ele, o login não
+   funciona (veja o pré-requisito acima).
+2. Clique no botão **"Adicionar repositório no HACS"** acima (ou, no HACS,
    vá em menu (⋮) → **Repositórios personalizados** e adicione a URL deste
    repositório como tipo **Integration**).
-2. Instale "Enel São Paulo" e reinicie o Home Assistant.
-3. Clique no botão **"Adicionar integração"** acima (ou vá em
+3. Instale "Enel São Paulo" e reinicie o Home Assistant.
+4. Clique no botão **"Adicionar integração"** acima (ou vá em
    Configurações → Dispositivos e Serviços → Adicionar integração →
    **Enel São Paulo**).
-4. Informe o mesmo usuário (e-mail ou CPF) e senha que você usa em
+5. Informe o mesmo usuário (e-mail ou CPF) e senha que você usa em
    [www.enel.com.br](https://www.enel.com.br/pt-saopaulo/login.html). Se a
-   conta tiver mais de uma unidade consumidora, repita o passo 3 para
+   conta tiver mais de uma unidade consumidora, repita o passo 4 para
    adicionar as demais.
 
 ## Aviso de segurança: link da fatura em PDF
@@ -74,6 +90,6 @@ log em Configurações → Sistema → Logs. A senha nunca é registrada no log.
 
 ## Documentação técnica
 
-Detalhes sobre o fluxo de login, de onde vem cada campo e como o Painel de
-Energia é alimentado estão em [TECHNICAL.md](TECHNICAL.md) — útil para quem
-quer entender ou contribuir com o código.
+Detalhes sobre o fluxo de login (incluindo o papel do add-on Enel SP Auth) e
+de onde vem cada campo estão em [TECHNICAL.md](TECHNICAL.md) — útil para
+quem quer entender ou contribuir com o código.

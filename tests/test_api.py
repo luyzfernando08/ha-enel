@@ -72,52 +72,6 @@ class _FakeSequentialSession:
 
 
 @pytest.mark.asyncio
-async def test_submit_credentials_sends_exact_field_set_from_real_capture():
-    """Teste de regressão: confere se o corpo do POST bate campo a campo com o
-    do navegador real (capturado via HAR), incluindo o par "data" duplicado
-    do qual o EnelCustomBasicAuthenticator do WSO2 pode depender."""
-    from custom_components.enel_sp.const import SAMLSSO_URL
-
-    saml_html = '<form><input type="hidden" name="SAMLResponse" value="RkFLRQ=="/></form>'
-    session = _FakeSession(_FakeResponse(text=saml_html))
-    client = EnelSPClient(session, username="user@example.com", password="p@ss!w0rd")
-
-    result = await client._async_submit_credentials("session-data-key-123")
-
-    assert result == "RkFLRQ=="
-    assert len(session.calls) == 1
-    url, kwargs = session.calls[0]
-    assert url == SAMLSSO_URL
-    assert kwargs["data"] == [
-        ("login_options", "Email"),
-        ("data", "user@example.com"),
-        ("data", "p@ss!w0rd"),
-        ("username", "user@example.com"),
-        ("password", "p@ss!w0rd"),
-        ("tocommonauth", "true"),
-        ("sessionDataKey", "session-data-key-123"),
-    ]
-
-
-@pytest.mark.asyncio
-async def test_submit_credentials_sends_origin_host_referer_from_real_capture():
-    from custom_components.enel_sp.const import ACCOUNTS_ORIGIN, WWW_ORIGIN
-
-    saml_html = '<form><input type="hidden" name="SAMLResponse" value="RkFLRQ=="/></form>'
-    session = _FakeSession(_FakeResponse(text=saml_html))
-    client = EnelSPClient(session, username="user@example.com", password="p@ss!w0rd")
-
-    await client._async_submit_credentials("session-data-key-123")
-
-    _, kwargs = session.calls[0]
-    assert kwargs["headers"] == {
-        "Host": "accounts.enel.com",
-        "Origin": WWW_ORIGIN,
-        "Referer": f"{WWW_ORIGIN}/",
-    }
-
-
-@pytest.mark.asyncio
 async def test_business_call_sends_origin_host_referer_per_target_host():
     from custom_components.enel_sp.const import WWW_ORIGIN
 
@@ -257,50 +211,6 @@ async def test_get_bill_pdf_gives_up_after_max_attempts(monkeypatch):
 
 async def _noop():
     return None
-
-
-@pytest.mark.asyncio
-async def test_submit_credentials_raises_auth_error_without_saml_response():
-    session = _FakeSession(_FakeResponse(text="<html>Invalid credentials</html>"))
-    client = EnelSPClient(session, username="user@example.com", password="wrong")
-
-    from custom_components.enel_sp.api import EnelSPAuthError
-
-    with pytest.raises(EnelSPAuthError):
-        await client._async_submit_credentials("session-data-key-123")
-
-
-def test_extract_saml_response_with_double_quotes():
-    from custom_components.enel_sp.api import _extract_saml_response
-    import html as html_mod
-
-    html_body = (
-        '<form><input type="hidden" name="SAMLResponse" '
-        'value="PD94bWwgdmVyc2lvbj0mIzQzOw=="/></form>'
-    )
-    result = _extract_saml_response(html_body)
-    assert result is not None
-    assert html_mod.unescape(result) == "PD94bWwgdmVyc2lvbj0mIzQzOw=="
-
-
-def test_extract_saml_response_with_single_quotes():
-    """Regressão: a página real do WSO2 IS usa aspas simples nos atributos
-    (`name='SAMLResponse' value='...'`), não aspas duplas — foi por isso que
-    o login parava de funcionar em produção mesmo com credenciais corretas."""
-    from custom_components.enel_sp.api import _extract_saml_response
-
-    html_body = (
-        "<form method='post' action='https://www.enel.com.br/pt-saopaulo/login.html'>"
-        "<input type='hidden' name='SAMLResponse' value='PD94bWwgZmFrZQ=='>"
-        "</form>"
-    )
-    assert _extract_saml_response(html_body) == "PD94bWwgZmFrZQ=="
-
-
-def test_extract_saml_response_returns_none_when_absent():
-    from custom_components.enel_sp.api import _extract_saml_response
-
-    assert _extract_saml_response("<html>Invalid credentials</html>") is None
 
 
 def test_get_installations_from_fixture():
@@ -630,148 +540,32 @@ async def test_async_get_all_data_next_due_bill_picks_most_recent_pending(monkey
     assert data.next_due_bill["BELNR"] == "NEWER"
 
 
-def test_build_consumption_statistics_drops_current_month_and_chains_hourly():
-    from custom_components.enel_sp.api import build_consumption_statistics
+def test_compute_next_update_interval_uses_next_reading_plus_one_day():
+    from datetime import date, datetime, timedelta
+    from custom_components.enel_sp.api import compute_next_update_interval
+    from custom_components.enel_sp.const import SAO_PAULO_TZ
 
-    monthly_history = _load("portalhistoryinfo")["Body"]["ET_MEDIA_CONS"]
-    hourly_data = _load("smartmetergetconsumptionchartdata")["Body"]["T_GRAPHIC_HOUR"]
+    now = datetime(2026, 8, 10, 12, 0, tzinfo=SAO_PAULO_TZ)
+    interval = compute_next_update_interval(date(2026, 9, 10), now=now)
 
-    points = build_consumption_statistics(monthly_history, hourly_data)
-
-    # O fixture tem 2 meses (07/2026 e 08/2026); o mais recente (08/2026) é
-    # descartado por se sobrepor à janela horária -> sobra 1 ponto mensal.
-    # Dos 4 pontos horários, só 3 são do registrador "03" (energia ativa); o
-    # de registrador "04" é ignorado.
-    assert len(points) == 1 + 3
-
-    monthly_points = points[:1]
-    hourly_points = points[1:]
-
-    assert monthly_points[-1]["sum"] == 173.0
-    # Regressão: precisa ser meia-noite em horário de São Paulo, não UTC —
-    # meia-noite UTC do dia 1 é 21h do dia 30 do mês anterior em horário
-    # local, e o HA agrupa estatísticas por "Mês" usando o fuso local, então
-    # UTC jogava esse ponto inteiro pro mês errado.
-    from datetime import datetime as _datetime
-    from zoneinfo import ZoneInfo
-
-    sp_tz = ZoneInfo("America/Sao_Paulo")
-    assert monthly_points[0]["start"] == _datetime(2026, 7, 1, tzinfo=sp_tz)
-    assert monthly_points[0]["start"].astimezone(sp_tz).month == 7
-
-    # Pontos horários em ordem cronológica, continuando a soma cumulativa.
-    assert [p["start"].hour for p in hourly_points] == [22, 23, 0]
-    assert hourly_points[-1]["sum"] == 173.0 + 0.10 + 2.13 + 0.23
-
-    # "state" acompanha "sum": cartões genéricos que pedem "Estado" (em vez
-    # de "Soma", o tipo que o Painel de Energia usa) também precisam ter dado.
-    assert all(p["state"] == p["sum"] for p in points)
+    expected_target = datetime(2026, 9, 11, 0, 0, tzinfo=SAO_PAULO_TZ)
+    assert interval == expected_target - now
 
 
-def test_build_consumption_statistics_empty_inputs():
-    from custom_components.enel_sp.api import build_consumption_statistics
+def test_compute_next_update_interval_falls_back_when_missing():
+    from datetime import datetime
+    from custom_components.enel_sp.api import compute_next_update_interval
+    from custom_components.enel_sp.const import DEFAULT_UPDATE_INTERVAL, SAO_PAULO_TZ
 
-    assert build_consumption_statistics([], []) == []
-
-
-def test_smart_meter_month_history_converts_abbreviated_months():
-    from custom_components.enel_sp.api import smart_meter_month_history
-
-    chart_data = _load("smartmetergetconsumptionchartdata")["Body"]
-
-    months = smart_meter_month_history(chart_data)
-
-    # Fixture tem 3 meses (JUN/JUL/AGO 26) — mais do que o portalhistoryinfo
-    # (só JUL/AGO), refletindo a captura real: T_GRAPHIC_MONTH não é limitado
-    # pela janela de StartDate/EndDate pedida, ao contrário de T_GRAPHIC_HOUR.
-    assert months == [
-        {"MESREF": "06/2026", "CONSUMO": 96.0, "DATA_FECHAMENTO": "20260710"},
-        {"MESREF": "07/2026", "CONSUMO": 173.0, "DATA_FECHAMENTO": "20260810"},
-        {"MESREF": "08/2026", "CONSUMO": 168.0, "DATA_FECHAMENTO": "20260909"},
-    ]
+    now = datetime(2026, 8, 10, 12, 0, tzinfo=SAO_PAULO_TZ)
+    assert compute_next_update_interval(None, now=now) == DEFAULT_UPDATE_INTERVAL
 
 
-def test_smart_meter_month_history_feeds_build_consumption_statistics():
-    """Regressão: T_GRAPHIC_MONTH deve poder ser usado como `monthly_history`
-    de `build_consumption_statistics` sem nenhuma conversão extra — foi por
-    isso que `smart_meter_month_history` produz o mesmo formato do
-    ET_MEDIA_CONS (MESREF/CONSUMO)."""
-    from custom_components.enel_sp.api import (
-        build_consumption_statistics,
-        smart_meter_month_history,
-    )
+def test_compute_next_update_interval_falls_back_when_target_in_past():
+    from datetime import date, datetime
+    from custom_components.enel_sp.api import compute_next_update_interval
+    from custom_components.enel_sp.const import DEFAULT_UPDATE_INTERVAL, SAO_PAULO_TZ
 
-    chart_data = _load("smartmetergetconsumptionchartdata")["Body"]
-    monthly_history = smart_meter_month_history(chart_data)
-
-    points = build_consumption_statistics(monthly_history, chart_data["T_GRAPHIC_HOUR"])
-
-    # 3 meses no fixture, o mais recente (AGO) descartado -> 2 pontos mensais
-    # (JUN, JUL) + 3 pontos horários (registrador "03").
-    monthly_points = points[:2]
-    assert [p["sum"] for p in monthly_points] == [96.0, 96.0 + 173.0]
-
-
-def test_build_consumption_statistics_last_reading_avoids_double_count_across_month_turn():
-    """Regressão do cenário descrito pelo usuário: o ciclo de leitura não
-    fecha necessariamente no dia 1 (aqui, no dia 10, mas isso varia por conta
-    e não é um valor fixo) — sem usar `last_reading` como fronteira, um
-    ponto horário de antes do fechamento (já coberto pelo mês fechado) seria
-    somado de novo, contando o mesmo consumo duas vezes assim que esse ciclo
-    aparecesse como mês fechado em `monthly_history`."""
-    from custom_components.enel_sp.api import build_consumption_statistics
-
-    last_reading = "20260810"  # ciclo mais recente fechou em 10/08.
-    monthly_history = [
-        {"MESREF": "07/2026", "CONSUMO": 173.0, "DATA_FECHAMENTO": "20260810"},
-        # Ainda em andamento (fecha só em 09/09) -> não deve entrar na soma.
-        {"MESREF": "08/2026", "CONSUMO": 168.0, "DATA_FECHAMENTO": "20260909"},
-    ]
-    hourly_data = [
-        # No mesmo dia do fechamento (10/08) ou antes: já contado no mês
-        # fechado de julho -> precisa ser ignorado aqui.
-        {
-            "Register": "03", "Date": "20260810", "Time": "230000",
-            "ConsumoKW": "1.00",
-        },
-        # Depois do fechamento: ainda não contado em nenhum mês -> soma.
-        {
-            "Register": "03", "Date": "20260811", "Time": "000000",
-            "ConsumoKW": "0.50",
-        },
-    ]
-
-    points = build_consumption_statistics(monthly_history, hourly_data, last_reading)
-
-    assert len(points) == 2  # 1 mês fechado (julho) + 1 ponto horário (dia 11).
-    assert points[0]["sum"] == 173.0
-    assert points[1]["sum"] == 173.0 + 0.50
-
-
-@pytest.mark.asyncio
-async def test_smart_meter_chart_data_request_shape():
-    from custom_components.enel_sp.const import SMARTMETER_CHART_URL
-
-    client = _client()
-    client._jwt = "fake-jwt"
-    session = _FakeSession(_FakeResponse(json_data=_load("smartmetergetconsumptionchartdata")))
-    client._session = session
-    installation = Installation(
-        anlage="0069999999", vertrag="0003999999", vkont="100099999999",
-        partner="0011111111", serial="FAKE000000000",
-    )
-
-    await client.async_get_smart_meter_chart_data(installation)
-
-    url, kwargs = session.calls[0]
-    assert url == SMARTMETER_CHART_URL
-    body = kwargs["json"]["Body"]
-    assert body["Contract"] == "0003999999"
-    assert body["ContractAccount"] == "100099999999"
-    assert body["PartnerNumber"] == "0011111111"
-    assert body["InstallationNumber"] == "0069999999"
-    assert body["Meter"] == "FAKE000000000"
-    assert body["ServiceCode"] == "GF"
-    assert body["TimeScale"] == "D"
-    assert body["T_REGISTERS"] == ["03", "04", "06", "08"]
-    assert kwargs["json"]["Header"]["Funcionalidad"] == "SmartMeter"
+    # next_reading_date + 1 dia já ficou no passado (dado desatualizado).
+    now = datetime(2026, 9, 20, 12, 0, tzinfo=SAO_PAULO_TZ)
+    assert compute_next_update_interval(date(2026, 9, 10), now=now) == DEFAULT_UPDATE_INTERVAL

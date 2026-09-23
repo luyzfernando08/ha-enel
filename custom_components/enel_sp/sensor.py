@@ -55,6 +55,13 @@ CURRENT_READING_DATE_DESCRIPTION = SensorEntityDescription(
     device_class=SensorDeviceClass.TIMESTAMP,
 )
 
+NEXT_UPDATE_DESCRIPTION = SensorEntityDescription(
+    key="data_proxima_atualizacao",
+    translation_key="data_proxima_atualizacao",
+    device_class=SensorDeviceClass.TIMESTAMP,
+    entity_category=EntityCategory.DIAGNOSTIC,
+)
+
 PREVIOUS_METER_READING_DESCRIPTION = SensorEntityDescription(
     key="valor_medidor_anterior",
     translation_key="valor_medidor_anterior",
@@ -145,6 +152,7 @@ async def async_setup_entry(
             EnelSPTariffFlagSensor(coordinator, TARIFF_FLAG_DESCRIPTION),
             EnelSPNextReadingDateSensor(coordinator, NEXT_READING_DATE_DESCRIPTION),
             EnelSPCurrentReadingDateSensor(coordinator, CURRENT_READING_DATE_DESCRIPTION),
+            EnelSPNextUpdateSensor(coordinator, NEXT_UPDATE_DESCRIPTION),
             EnelSPPreviousMeterReadingSensor(coordinator, PREVIOUS_METER_READING_DESCRIPTION),
             EnelSPCurrentMeterReadingSensor(coordinator, CURRENT_METER_READING_DESCRIPTION),
             EnelSPBillPdfUrlSensor(coordinator, BILL_PDF_URL_DESCRIPTION),
@@ -225,6 +233,21 @@ class EnelSPCurrentReadingDateSensor(EnelSPEntity):
     def native_value(self):
         date_value = self._data.current_reading_date
         return dt_util.start_of_local_day(date_value) if date_value else None
+
+
+class EnelSPNextUpdateSensor(EnelSPEntity):
+    """Horário estimado do próximo ciclo automático de atualização.
+
+    Vem do coordinator (`next_update`), não de `EnelSPData`: é recalculado a
+    cada atualização bem-sucedida com base em `next_reading_date + 1 dia`
+    (ver `api.compute_next_update_interval`), não é um dado que a Enel
+    devolve diretamente. Um refresh manual (botão "Atualizar dados") entre
+    um ciclo e outro não muda esse horário.
+    """
+
+    @property
+    def native_value(self):
+        return self.coordinator.next_update
 
 
 class EnelSPPreviousMeterReadingSensor(EnelSPEntity):

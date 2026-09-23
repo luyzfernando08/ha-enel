@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+pydantic
+# O Chromium já vem pré-instalado na imagem base
+# mcr.microsoft.com/playwright/python (ver Dockerfile), mas só na revisão
+# exata que casa com ESTA versão do pacote "playwright". Se a versão do
+# pacote e a tag da imagem base divergirem (ex.: aqui sem pin, pip instala
+# sempre a mais nova), o navegador não é encontrado em runtime
+# ("Executable doesn't exist at /ms-playwright/..."). Sempre que atualizar a
+# tag da imagem no Dockerfile, atualize esta versão junto, para o mesmo
+# valor exato.
+playwright==1.47.0
