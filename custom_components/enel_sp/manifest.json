@@ -6,6 +6,6 @@
   "documentation": "https://github.com/luyzfernando08/ha-enel",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/luyzfernando08/ha-enel/issues",
-  "requirements": ["qrcode==7.4.2", "Pillow>=10.0.0"],
-  "version": "0.2.0"
+  "requirements": ["qrcode==7.4.2"],
+  "version": "0.2.1"
 }
